@@ -40,13 +40,13 @@ namespace EasyRequestHandlers.Request
                 throw new ArgumentException("Type must be an open generic like typeof(MyBehavior<,>)");
 
             var implementsInterface = openGenericBehavior.GetInterfaces()
-                .Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IPipelineBehaviour<,>));
+                .Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IPipelineBehavior<,>));
 
             if (!implementsInterface)
                 throw new ArgumentException($"Type {openGenericBehavior.Name} must implement IPipelineBehavior<,>");
 
             _services.TryAddEnumerable(
-                ServiceDescriptor.Transient(typeof(IPipelineBehaviour<,>), openGenericBehavior));
+                ServiceDescriptor.Transient(typeof(IPipelineBehavior<,>), openGenericBehavior));
 
             return this;
         }
@@ -66,14 +66,14 @@ namespace EasyRequestHandlers.Request
                 }
 
                 var implementsInterface = behaviorType.GetInterfaces()
-                    .Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IPipelineBehaviour<,>));
+                    .Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IPipelineBehavior<,>));
 
                 if (!implementsInterface)
                 {
                     throw new ArgumentException($"Type {behaviorType.Name} must implement IPipelineBehavior<,>");
                 }
 
-                _services.TryAddEnumerable(ServiceDescriptor.Transient(typeof(IPipelineBehaviour<,>), behaviorType));
+                _services.TryAddEnumerable(ServiceDescriptor.Transient(typeof(IPipelineBehavior<,>), behaviorType));
             }
 
             return this;

@@ -40,7 +40,7 @@ namespace EasyRequestHandlers.Request
 
             var handler = (RequestHandler<TRequest, TResponse>)GetHandler(typeof(RequestHandler<TRequest, TResponse>));
 
-            IPipelineBehaviour<TRequest, TResponse>[] behaviors;
+            IPipelineBehavior<TRequest, TResponse>[] behaviors;
             
             IRequestHook<TRequest, TResponse>[] hooks;
             
@@ -48,7 +48,7 @@ namespace EasyRequestHandlers.Request
             
             IRequestPostHook<TRequest, TResponse>[] postHooks;
 
-            behaviors = _serviceProvider.GetServices<IPipelineBehaviour<TRequest, TResponse>>().ToArray();
+            behaviors = _serviceProvider.GetServices<IPipelineBehavior<TRequest, TResponse>>().ToArray();
 
             if (_options.EnableRequestHooks)
             {
@@ -130,7 +130,7 @@ namespace EasyRequestHandlers.Request
         {
             var handler = _serviceProvider.GetRequiredService<RequestHandler<TResponse>>();
 
-            var behaviors = _serviceProvider.GetServices<IPipelineBehaviour<EmptyRequest, TResponse>>().ToArray();
+            var behaviors = _serviceProvider.GetServices<IPipelineBehavior<EmptyRequest, TResponse>>().ToArray();
 
             IRequestHook<EmptyRequest, TResponse>[] hooks;
 

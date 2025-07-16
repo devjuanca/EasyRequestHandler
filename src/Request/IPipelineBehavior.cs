@@ -5,7 +5,7 @@ namespace EasyRequestHandlers.Request
 {
     public delegate Task<TResponse> RequestHandlerDelegate<TResponse>();
 
-    public interface IPipelineBehaviour<TRequest, TResponse>
+    public interface IPipelineBehavior<TRequest, TResponse>
     {
         Task<TResponse> Handle(TRequest request, CancellationToken cancellationToken, RequestHandlerDelegate<TResponse> next);
     }

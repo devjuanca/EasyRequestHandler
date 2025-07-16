@@ -40,7 +40,7 @@ public class HooksTests
     }
 
     // Behavior for no-input request
-    public class NoInputBehavior : IPipelineBehaviour<EmptyRequest, TestResponse>
+    public class NoInputBehavior : IPipelineBehavior<EmptyRequest, TestResponse>
     {
         public static bool BehaviorCalled { get; set; }
         
