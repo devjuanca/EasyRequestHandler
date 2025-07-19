@@ -176,9 +176,16 @@ services.AddEasyRequestHandlers(typeof(Program))
 Minimal API example:
 
 ```csharp
-app.MapGet("/weatherforecast", async (WeatherForecastHandler handler) =>
+//Using direct handler injection.
+app.MapGet("/weather-forecast", async (WeatherRequest request, WeatherForecastHandler handler) =>
 {
-    return await handler.HandleAsync();
+    return await handler.HandleAsync(request);
+});
+
+//Using Mediator Pattern
+app.MapGet("/weather-forecast", async (WeatherRequest request, ISender sender) =>
+{
+    return await sender.SendAsync<WeatherRequest, WeatherForecast?>(request, cancellationToken: cancellationToken);
 });
 ```
 
