@@ -5,8 +5,9 @@ using Microsoft.Extensions.Logging;
 namespace Benchmarks.Behaviors;
 
 // MediatR logging behavior
+
 public class MediatRLoggingBehavior<TRequest, TResponse> : MediatR.IPipelineBehavior<TRequest, TResponse>
-    where TRequest : notnull
+   where TRequest : IRequest<TResponse>
 {
     private readonly ILogger<MediatRLoggingBehavior<TRequest, TResponse>> _logger;
 
@@ -23,6 +24,7 @@ public class MediatRLoggingBehavior<TRequest, TResponse> : MediatR.IPipelineBeha
         return response;
     }
 }
+
 
 // EasyRequestHandler logging behavior
 public class EasyLoggingBehavior<TRequest, TResponse> : EasyRequestHandlers.Request.IPipelineBehavior<TRequest, TResponse>

@@ -24,6 +24,14 @@ namespace EasyRequestHandlers.Request
 
         private static readonly ConcurrentDictionary<Type, Func<IServiceProvider, object>> _factoryCache = new ConcurrentDictionary<Type, Func<IServiceProvider, object>>();
 
+        private static readonly ConcurrentDictionary<Type, Func<IServiceProvider, Array>> _behaviorsFactoryCache = new ConcurrentDictionary<Type, Func<IServiceProvider, Array>>();
+
+        private static readonly ConcurrentDictionary<Type, Func<IServiceProvider, Array>> _hooksFactoryCache = new ConcurrentDictionary<Type, Func<IServiceProvider, Array>>();
+
+        private static readonly ConcurrentDictionary<Type, Func<IServiceProvider, Array>> _preHooksFactoryCache = new ConcurrentDictionary<Type, Func<IServiceProvider, Array>>();
+
+        private static readonly ConcurrentDictionary<Type, Func<IServiceProvider, Array>> _postHooksFactoryCache = new ConcurrentDictionary<Type, Func<IServiceProvider, Array>>();
+
         public Sender(IServiceProvider serviceProvider, RequestHandlerOptions options)
         {
             _serviceProvider = serviceProvider;
@@ -40,28 +48,13 @@ namespace EasyRequestHandlers.Request
 
             var handler = (RequestHandler<TRequest, TResponse>)GetHandler(typeof(RequestHandler<TRequest, TResponse>));
 
-            IPipelineBehavior<TRequest, TResponse>[] behaviors;
-            
-            IRequestHook<TRequest, TResponse>[] hooks;
-            
-            IRequestPreHook<TRequest>[] preHooks;
-            
-            IRequestPostHook<TRequest, TResponse>[] postHooks;
+            var behaviors = GetBehaviors<TRequest, TResponse>();
 
-            behaviors = _serviceProvider.GetServices<IPipelineBehavior<TRequest, TResponse>>().ToArray();
+            var hooks = _options.EnableRequestHooks ? GetHooks<TRequest, TResponse>() : Array.Empty<IRequestHook<TRequest, TResponse>>();
 
-            if (_options.EnableRequestHooks)
-            {
-                hooks = _serviceProvider.GetServices<IRequestHook<TRequest, TResponse>>().ToArray();
-                preHooks = _serviceProvider.GetServices<IRequestPreHook<TRequest>>().ToArray();
-                postHooks = _serviceProvider.GetServices<IRequestPostHook<TRequest, TResponse>>().ToArray();
-            }
-            else
-            {
-                hooks = Array.Empty<IRequestHook<TRequest, TResponse>>();
-                preHooks = Array.Empty<IRequestPreHook<TRequest>>();
-                postHooks = Array.Empty<IRequestPostHook<TRequest, TResponse>>();
-            }
+            var preHooks = _options.EnableRequestHooks ? GetPreHooks<TRequest>() : Array.Empty<IRequestPreHook<TRequest>>();
+
+            var postHooks = _options.EnableRequestHooks ? GetPostHooks<TRequest, TResponse>() : Array.Empty<IRequestPostHook<TRequest, TResponse>>();
 
             if (behaviors.Length == 0 && hooks.Length == 0 && preHooks.Length == 0 && postHooks.Length == 0)
             {
@@ -97,7 +90,7 @@ namespace EasyRequestHandlers.Request
                     {
                         for (int i = 0; i < postHooks.Length; i++)
                         {
-                            await postHooks[i].OnExecutedAsync(request, response, cancellationToken).ConfigureAwait(false);     
+                            await postHooks[i].OnExecutedAsync(request, response, cancellationToken).ConfigureAwait(false);
                         }
                     }
 
@@ -130,33 +123,19 @@ namespace EasyRequestHandlers.Request
         {
             var handler = _serviceProvider.GetRequiredService<RequestHandler<TResponse>>();
 
-            var behaviors = _serviceProvider.GetServices<IPipelineBehavior<EmptyRequest, TResponse>>().ToArray();
+            var behaviors = GetBehaviors<EmptyRequest, TResponse>();
 
-            IRequestHook<EmptyRequest, TResponse>[] hooks;
+            var hooks = _options.EnableRequestHooks ? GetHooks<EmptyRequest, TResponse>() : Array.Empty<IRequestHook<EmptyRequest, TResponse>>();
 
-            IRequestPreHook<EmptyRequest>[] preHooks;
+            var preHooks = _options.EnableRequestHooks ? GetPreHooks<EmptyRequest>() : Array.Empty<IRequestPreHook<EmptyRequest>>();
 
-            IRequestPostHook<EmptyRequest, TResponse>[] postHooks;
-
-            if (_options.EnableRequestHooks)
-            {
-                hooks = _serviceProvider.GetServices<IRequestHook<EmptyRequest, TResponse>>().ToArray();
-                preHooks = _serviceProvider.GetServices<IRequestPreHook<EmptyRequest>>().ToArray();
-                postHooks = _serviceProvider.GetServices<IRequestPostHook<EmptyRequest, TResponse>>().ToArray();
-            }
-            else
-            {
-                hooks = Array.Empty<IRequestHook<EmptyRequest, TResponse>>();
-                preHooks = Array.Empty<IRequestPreHook<EmptyRequest>>();
-                postHooks = Array.Empty<IRequestPostHook<EmptyRequest, TResponse>>();
-            }
+            var postHooks = _options.EnableRequestHooks ? GetPostHooks<EmptyRequest, TResponse>() : Array.Empty<IRequestPostHook<EmptyRequest, TResponse>>();
 
             if (behaviors.Length == 0 && hooks.Length == 0 && preHooks.Length == 0 && postHooks.Length == 0)
             {
                 return handler.HandleAsync(cancellationToken);
             }
 
-            // Create an empty request instance to pass through the pipeline
             var emptyRequest = new EmptyRequest();
 
             RequestHandlerDelegate<TResponse> handlerDelegate = async () =>
@@ -224,6 +203,34 @@ namespace EasyRequestHandlers.Request
             return factory(_serviceProvider);
         }
 
+        private IPipelineBehavior<TRequest, TResponse>[] GetBehaviors<TRequest, TResponse>()
+        {
+            var cacheKey = typeof(IPipelineBehavior<TRequest, TResponse>);
+            var factory = _behaviorsFactoryCache.GetOrAdd(cacheKey, CreateCollectionFactory<IPipelineBehavior<TRequest, TResponse>>);
+            return (IPipelineBehavior<TRequest, TResponse>[])factory(_serviceProvider);
+        }
+
+        private IRequestHook<TRequest, TResponse>[] GetHooks<TRequest, TResponse>()
+        {
+            var cacheKey = typeof(IRequestHook<TRequest, TResponse>);
+            var factory = _hooksFactoryCache.GetOrAdd(cacheKey, CreateCollectionFactory<IRequestHook<TRequest, TResponse>>);
+            return (IRequestHook<TRequest, TResponse>[])factory(_serviceProvider);
+        }
+
+        private IRequestPreHook<TRequest>[] GetPreHooks<TRequest>()
+        {
+            var cacheKey = typeof(IRequestPreHook<TRequest>);
+            var factory = _preHooksFactoryCache.GetOrAdd(cacheKey, CreateCollectionFactory<IRequestPreHook<TRequest>>);
+            return (IRequestPreHook<TRequest>[])factory(_serviceProvider);
+        }
+
+        private IRequestPostHook<TRequest, TResponse>[] GetPostHooks<TRequest, TResponse>()
+        {
+            var cacheKey = typeof(IRequestPostHook<TRequest, TResponse>);
+            var factory = _postHooksFactoryCache.GetOrAdd(cacheKey, CreateCollectionFactory<IRequestPostHook<TRequest, TResponse>>);
+            return (IRequestPostHook<TRequest, TResponse>[])factory(_serviceProvider);
+        }
+
         private static Func<IServiceProvider, object> CreateFactory(Type type)
         {
             var providerParam = Expression.Parameter(typeof(IServiceProvider), "provider");
@@ -238,6 +245,30 @@ namespace EasyRequestHandlers.Request
             var castResult = Expression.Convert(getServiceCall, typeof(object));
 
             var lambda = Expression.Lambda<Func<IServiceProvider, object>>(castResult, providerParam);
+
+            return lambda.Compile();
+        }
+
+        private static Func<IServiceProvider, Array> CreateCollectionFactory<T>(Type type)
+        {
+            var providerParam = Expression.Parameter(typeof(IServiceProvider), "provider");
+
+            var getServicesCall = Expression.Call(
+                typeof(ServiceProviderServiceExtensions),
+                nameof(ServiceProviderServiceExtensions.GetServices),
+                new[] { type },
+                providerParam
+            );
+
+            var toArrayCall = Expression.Call(
+                typeof(Enumerable),
+                nameof(Enumerable.ToArray),
+                new[] { type },
+                getServicesCall
+            );
+            var castResult = Expression.Convert(toArrayCall, typeof(Array));
+
+            var lambda = Expression.Lambda<Func<IServiceProvider, Array>>(castResult, providerParam);
 
             return lambda.Compile();
         }

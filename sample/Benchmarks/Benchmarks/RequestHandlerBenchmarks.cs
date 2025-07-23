@@ -1,5 +1,6 @@
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Order;
+using Benchmarks.Behaviors;
 using Benchmarks.Scenarios.ComplexRequest;
 using Benchmarks.Scenarios.SimpleRequest;
 using EasyRequestHandlers.Request;
@@ -46,7 +47,10 @@ public class RequestHandlerBenchmarks
         // Add logging
         mediatRServices.AddLogging(_ => { });
 
-        mediatRServices.AddMediatR(cfg => cfg.RegisterServicesFromAssemblyContaining<RequestHandlerBenchmarks>());
+        mediatRServices.AddMediatR(cfg =>
+        {
+            cfg.RegisterServicesFromAssemblyContaining<RequestHandlerBenchmarks>();
+        });
 
         _mediatRServiceProvider = mediatRServices.BuildServiceProvider();
         _mediator = _mediatRServiceProvider.GetRequiredService<IMediator>();

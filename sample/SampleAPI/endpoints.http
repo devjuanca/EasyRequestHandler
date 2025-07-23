@@ -15,7 +15,7 @@ Content-Type: application/json
   "city": "Berlin",
   "weatherForecast":{
     "Date": "2024-08-30",
-    "TemperatureC": -10,
+    "TemperatureC": 50,
     "Summary": "Partly Cloudy"
   }
 }
