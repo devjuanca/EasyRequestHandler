@@ -23,11 +23,13 @@ namespace EasyRequestHandlers.Request
         private readonly RequestHandlerOptions _options;
 
         private static readonly ConcurrentDictionary<Type, Func<IServiceProvider, object>> _factoryCache = new ConcurrentDictionary<Type, Func<IServiceProvider, object>>();
+        
+        // Cache for empty arrays to avoid repeated allocations
+        private static readonly object[] _emptyArray = Array.Empty<object>();
 
         public Sender(IServiceProvider serviceProvider, RequestHandlerOptions options)
         {
             _serviceProvider = serviceProvider;
-
             _options = options;
         }
 
@@ -40,181 +42,216 @@ namespace EasyRequestHandlers.Request
 
             var handler = (RequestHandler<TRequest, TResponse>)GetHandler(typeof(RequestHandler<TRequest, TResponse>));
 
-            IPipelineBehavior<TRequest, TResponse>[] behaviors;
-            
-            IRequestHook<TRequest, TResponse>[] hooks;
-            
-            IRequestPreHook<TRequest>[] preHooks;
-            
-            IRequestPostHook<TRequest, TResponse>[] postHooks;
-
-            behaviors = _serviceProvider.GetServices<IPipelineBehavior<TRequest, TResponse>>().ToArray();
-
-            if (_options.EnableRequestHooks)
+            if (!_options.EnableRequestHooks)
             {
-                hooks = _serviceProvider.GetServices<IRequestHook<TRequest, TResponse>>().ToArray();
-                preHooks = _serviceProvider.GetServices<IRequestPreHook<TRequest>>().ToArray();
-                postHooks = _serviceProvider.GetServices<IRequestPostHook<TRequest, TResponse>>().ToArray();
-            }
-            else
-            {
-                hooks = Array.Empty<IRequestHook<TRequest, TResponse>>();
-                preHooks = Array.Empty<IRequestPreHook<TRequest>>();
-                postHooks = Array.Empty<IRequestPostHook<TRequest, TResponse>>();
-            }
+                var behaviorServices = _serviceProvider.GetServices<IPipelineBehavior<TRequest, TResponse>>();
 
-            if (behaviors.Length == 0 && hooks.Length == 0 && preHooks.Length == 0 && postHooks.Length == 0)
-            {
-                return handler.HandleAsync(request, cancellationToken);
-            }
-
-            RequestHandlerDelegate<TResponse> handlerDelegate = async () =>
-            {
-                if (_options.EnableRequestHooks)
+                if (!behaviorServices.Any())
                 {
-                    if (preHooks.Length > 0)
-                    {
-                        for (int i = 0; i < preHooks.Length; i++)
-                        {
-                            await preHooks[i].OnExecutingAsync(request, cancellationToken).ConfigureAwait(false);
-                        }
-                    }
-
-                    if (hooks.Length > 0)
-                    {
-                        for (int i = 0; i < hooks.Length; i++)
-                        {
-                            await hooks[i].OnExecutingAsync(request, cancellationToken).ConfigureAwait(false);
-                        }
-                    }
+                    return handler.HandleAsync(request, cancellationToken);
                 }
-
-                var response = await handler.HandleAsync(request, cancellationToken).ConfigureAwait(false);
-
-                if (_options.EnableRequestHooks)
-                {
-                    if (postHooks.Length > 0)
-                    {
-                        for (int i = 0; i < postHooks.Length; i++)
-                        {
-                            await postHooks[i].OnExecutedAsync(request, response, cancellationToken).ConfigureAwait(false);     
-                        }
-                    }
-
-                    if (hooks.Length > 0)
-                    {
-                        for (int i = 0; i < hooks.Length; i++)
-                        {
-                            await hooks[i].OnExecutedAsync(request, response, cancellationToken).ConfigureAwait(false);
-                        }
-                    }
-                }
-
-                return response;
-            };
-
-            if (behaviors.Length > 0)
-            {
-                for (int i = behaviors.Length - 1; i >= 0; i--)
-                {
-                    var next = handlerDelegate;
-                    var behavior = behaviors[i];
-                    handlerDelegate = () => behavior.Handle(request, cancellationToken, next);
-                }
+                
+                // Only behaviors, no hooks - simplified pipeline
+                return ExecuteWithBehaviorsOnly(handler, behaviorServices, request, cancellationToken);
             }
 
-            return handlerDelegate();
+            // Full pipeline with hooks
+            return ExecuteWithFullPipeline<TRequest, TResponse>(handler, request, cancellationToken);
         }
 
         public Task<TResponse> SendAsync<TResponse>(CancellationToken cancellationToken = default)
         {
             var handler = _serviceProvider.GetRequiredService<RequestHandler<TResponse>>();
 
-            var behaviors = _serviceProvider.GetServices<IPipelineBehavior<EmptyRequest, TResponse>>().ToArray();
-
-            IRequestHook<EmptyRequest, TResponse>[] hooks;
-
-            IRequestPreHook<EmptyRequest>[] preHooks;
-
-            IRequestPostHook<EmptyRequest, TResponse>[] postHooks;
-
-            if (_options.EnableRequestHooks)
+            if (!_options.EnableRequestHooks)
             {
-                hooks = _serviceProvider.GetServices<IRequestHook<EmptyRequest, TResponse>>().ToArray();
-                preHooks = _serviceProvider.GetServices<IRequestPreHook<EmptyRequest>>().ToArray();
-                postHooks = _serviceProvider.GetServices<IRequestPostHook<EmptyRequest, TResponse>>().ToArray();
-            }
-            else
-            {
-                hooks = Array.Empty<IRequestHook<EmptyRequest, TResponse>>();
-                preHooks = Array.Empty<IRequestPreHook<EmptyRequest>>();
-                postHooks = Array.Empty<IRequestPostHook<EmptyRequest, TResponse>>();
-            }
+                var behaviorServices = _serviceProvider.GetServices<IPipelineBehavior<EmptyRequest, TResponse>>();
 
-            if (behaviors.Length == 0 && hooks.Length == 0 && preHooks.Length == 0 && postHooks.Length == 0)
-            {
-                return handler.HandleAsync(cancellationToken);
-            }
-
-            // Create an empty request instance to pass through the pipeline
-            var emptyRequest = new EmptyRequest();
-
-            RequestHandlerDelegate<TResponse> handlerDelegate = async () =>
-            {
-                if (_options.EnableRequestHooks)
+                if (!behaviorServices.Any())
                 {
-                    if (preHooks.Length > 0)
-                    {
-                        for (int i = 0; i < preHooks.Length; i++)
-                        {
-                            await preHooks[i].OnExecutingAsync(emptyRequest, cancellationToken).ConfigureAwait(false);
-                        }
-                    }
+                    return handler.HandleAsync(cancellationToken);
+                }
+                
+                var emptyRequest = new EmptyRequest();
 
-                    if (hooks.Length > 0)
-                    {
-                        for (int i = 0; i < hooks.Length; i++)
-                        {
-                            await hooks[i].OnExecutingAsync(emptyRequest, cancellationToken).ConfigureAwait(false);
-                        }
-                    }
+                return ExecuteWithBehaviorsOnlyForEmpty(handler, behaviorServices, emptyRequest, cancellationToken);
+            }
+
+            // Full pipeline with hooks for EmptyRequest
+            var emptyRequestFull = new EmptyRequest();
+
+            return ExecuteWithFullPipelineForEmpty(handler, emptyRequestFull, cancellationToken);
+        }
+
+        private Task<TResponse> ExecuteWithBehaviorsOnly<TRequest, TResponse>(
+            RequestHandler<TRequest, TResponse> handler,
+            IEnumerable<IPipelineBehavior<TRequest, TResponse>> behaviors,
+            TRequest request,
+            CancellationToken cancellationToken)
+        {
+            RequestHandlerDelegate<TResponse> pipeline = () => handler.HandleAsync(request, cancellationToken);
+            
+            foreach (var behavior in behaviors.Reverse())
+            {
+                var currentBehavior = behavior;
+                var next = pipeline;
+                pipeline = () => currentBehavior.Handle(request, cancellationToken, next);
+            }
+            
+            return pipeline();
+        }
+
+        private Task<TResponse> ExecuteWithFullPipeline<TRequest, TResponse>(
+            RequestHandler<TRequest, TResponse> handler,
+            TRequest request,
+            CancellationToken cancellationToken)
+        {
+
+            var behaviors = _serviceProvider.GetServices<IPipelineBehavior<TRequest, TResponse>>();
+
+            var hooks = _serviceProvider.GetServices<IRequestHook<TRequest, TResponse>>();
+
+            var preHooks = _serviceProvider.GetServices<IRequestPreHook<TRequest>>();
+
+            var postHooks = _serviceProvider.GetServices<IRequestPostHook<TRequest, TResponse>>();
+
+            var behaviorsList = behaviors.ToList();
+
+            var hooksList = hooks.ToList();
+
+            var preHooksList = preHooks.ToList();
+
+            var postHooksList = postHooks.ToList();
+
+            if (behaviorsList.Count == 0 && hooksList.Count == 0 && preHooksList.Count == 0 && postHooksList.Count == 0)
+            {
+                return handler.HandleAsync(request, cancellationToken);
+            }
+
+            RequestHandlerDelegate<TResponse> pipeline = async () =>
+            {
+                // Execute pre-hooks
+                for (int i = 0; i < preHooksList.Count; i++)
+                {
+                    await preHooksList[i].OnExecutingAsync(request, cancellationToken).ConfigureAwait(false);
+                }
+                
+                for (int i = 0; i < hooksList.Count; i++)
+                {
+                    await hooksList[i].OnExecutingAsync(request, cancellationToken).ConfigureAwait(false);
                 }
 
-                var response = await handler.HandleAsync(cancellationToken).ConfigureAwait(false);
+                // Execute handler
+                var response = await handler.HandleAsync(request, cancellationToken).ConfigureAwait(false);
 
-                if (_options.EnableRequestHooks)
+                // Execute post-hooks
+                for (int i = 0; i < postHooksList.Count; i++)
                 {
-                    if (postHooks.Length > 0)
-                    {
-                        for (int i = 0; i < postHooks.Length; i++)
-                        {
-                            await postHooks[i].OnExecutedAsync(emptyRequest, response, cancellationToken).ConfigureAwait(false);
-                        }
-                    }
-
-                    if (hooks.Length > 0)
-                    {
-                        for (int i = 0; i < hooks.Length; i++)
-                        {
-                            await hooks[i].OnExecutedAsync(emptyRequest, response, cancellationToken).ConfigureAwait(false);
-                        }
-                    }
+                    await postHooksList[i].OnExecutedAsync(request, response, cancellationToken).ConfigureAwait(false);
+                }
+                
+                for (int i = 0; i < hooksList.Count; i++)
+                {
+                    await hooksList[i].OnExecutedAsync(request, response, cancellationToken).ConfigureAwait(false);
                 }
 
                 return response;
             };
 
-            if (behaviors.Length > 0)
+            // Apply behaviors in reverse order
+            for (int i = behaviorsList.Count - 1; i >= 0; i--)
             {
-                for (int i = behaviors.Length - 1; i >= 0; i--)
-                {
-                    var next = handlerDelegate;
-                    var behavior = behaviors[i];
-                    handlerDelegate = () => behavior.Handle(emptyRequest, cancellationToken, next);
-                }
+                var behavior = behaviorsList[i];
+                var next = pipeline;
+                pipeline = () => behavior.Handle(request, cancellationToken, next);
             }
 
-            return handlerDelegate();
+            return pipeline();
+        }
+
+        private Task<TResponse> ExecuteWithBehaviorsOnlyForEmpty<TResponse>(
+            RequestHandler<TResponse> handler,
+            IEnumerable<IPipelineBehavior<EmptyRequest, TResponse>> behaviors,
+            EmptyRequest emptyRequest,
+            CancellationToken cancellationToken)
+        {
+            RequestHandlerDelegate<TResponse> pipeline = () => handler.HandleAsync(cancellationToken);
+            
+            foreach (var behavior in behaviors.Reverse())
+            {
+                var currentBehavior = behavior;
+                var next = pipeline;
+                pipeline = () => currentBehavior.Handle(emptyRequest, cancellationToken, next);
+            }
+            
+            return pipeline();
+        }
+
+        private Task<TResponse> ExecuteWithFullPipelineForEmpty<TResponse>(
+            RequestHandler<TResponse> handler,
+            EmptyRequest emptyRequest,
+            CancellationToken cancellationToken)
+        {
+            var behaviors = _serviceProvider.GetServices<IPipelineBehavior<EmptyRequest, TResponse>>();
+
+            var hooks = _serviceProvider.GetServices<IRequestHook<EmptyRequest, TResponse>>();
+
+            var preHooks = _serviceProvider.GetServices<IRequestPreHook<EmptyRequest>>();
+
+            var postHooks = _serviceProvider.GetServices<IRequestPostHook<EmptyRequest, TResponse>>();
+
+            var behaviorsList = behaviors.ToList();
+
+            var hooksList = hooks.ToList();
+
+            var preHooksList = preHooks.ToList();
+
+            var postHooksList = postHooks.ToList();
+
+            if (behaviorsList.Count == 0 && hooksList.Count == 0 && preHooksList.Count == 0 && postHooksList.Count == 0)
+            {
+                return handler.HandleAsync(cancellationToken);
+            }
+
+            RequestHandlerDelegate<TResponse> pipeline = async () =>
+            {
+                // Execute pre-hooks
+                for (int i = 0; i < preHooksList.Count; i++)
+                {
+                    await preHooksList[i].OnExecutingAsync(emptyRequest, cancellationToken).ConfigureAwait(false);
+                }
+                
+                for (int i = 0; i < hooksList.Count; i++)
+                {
+                    await hooksList[i].OnExecutingAsync(emptyRequest, cancellationToken).ConfigureAwait(false);
+                }
+
+                // Execute handler
+                var response = await handler.HandleAsync(cancellationToken).ConfigureAwait(false);
+
+                // Execute post-hooks
+                for (int i = 0; i < postHooksList.Count; i++)
+                {
+                    await postHooksList[i].OnExecutedAsync(emptyRequest, response, cancellationToken).ConfigureAwait(false);
+                }
+                
+                for (int i = 0; i < hooksList.Count; i++)
+                {
+                    await hooksList[i].OnExecutedAsync(emptyRequest, response, cancellationToken).ConfigureAwait(false);
+                }
+
+                return response;
+            };
+
+            // Apply behaviors in reverse order
+            for (int i = behaviorsList.Count - 1; i >= 0; i--)
+            {
+                var behavior = behaviorsList[i];
+                var next = pipeline;
+                pipeline = () => behavior.Handle(emptyRequest, cancellationToken, next);
+            }
+
+            return pipeline();
         }
 
         private object GetHandler(Type type)
@@ -236,12 +273,10 @@ namespace EasyRequestHandlers.Request
             );
 
             var castResult = Expression.Convert(getServiceCall, typeof(object));
-
             var lambda = Expression.Lambda<Func<IServiceProvider, object>>(castResult, providerParam);
 
             return lambda.Compile();
         }
     }
-
 }
 

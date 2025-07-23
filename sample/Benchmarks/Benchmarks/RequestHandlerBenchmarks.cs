@@ -5,7 +5,6 @@ using Benchmarks.Scenarios.SimpleRequest;
 using EasyRequestHandlers.Request;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using ISender = EasyRequestHandlers.Request.ISender;
 
 namespace Benchmarks.Benchmarks;
@@ -35,6 +34,7 @@ public class RequestHandlerBenchmarks
 
         easyRequestServices.AddEasyRequestHandlers(typeof(RequestHandlerBenchmarks))
             .WithMediatorPattern()
+            //.WithBehavior(typeof(EasyLoggingBehavior<,>))
             .Build();
 
         _easyRequestServiceProvider = easyRequestServices.BuildServiceProvider();
@@ -43,12 +43,18 @@ public class RequestHandlerBenchmarks
 
         // Setup MediatR
         var mediatRServices = new ServiceCollection();
+
         // Add logging
         mediatRServices.AddLogging(_ => { });
 
-        mediatRServices.AddMediatR(cfg => cfg.RegisterServicesFromAssemblyContaining<RequestHandlerBenchmarks>());
+        mediatRServices.AddMediatR(cfg =>
+        {
+            cfg.RegisterServicesFromAssemblyContaining<RequestHandlerBenchmarks>();
+            //cfg.AddOpenBehavior(typeof(MediatRLoggingBehavior<,>));
+        });
 
         _mediatRServiceProvider = mediatRServices.BuildServiceProvider();
+
         _mediator = _mediatRServiceProvider.GetRequiredService<IMediator>();
 
         // Setup EasyRequestHandler with direct injection (no mediator)
@@ -132,25 +138,6 @@ public class RequestHandlerBenchmarks
     {
         var handler = _easyDirectServiceProvider.GetRequiredService<EasyComplexRequestHandler>();
         return await handler.HandleAsync(_easyComplexRequest);
-    }
-
-    // DI benchmarks (existing)
-    [Benchmark]
-    [BenchmarkCategory("DI")]
-    public async Task<SimpleResponse> MediatR_WithDI()
-    {
-        using var scope = _mediatRServiceProvider.CreateScope();
-        var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
-        return await mediator.Send(new MediatRSimpleRequest { Value = 42 });
-    }
-
-    [Benchmark]
-    [BenchmarkCategory("DI")]
-    public async Task<SimpleResponse> EasyRequestHandler_WithDI()
-    {
-        using var scope = _easyRequestServiceProvider.CreateScope();
-        var sender = scope.ServiceProvider.GetRequiredService<ISender>();
-        return await sender.SendAsync<EasySimpleRequest, SimpleResponse>(new EasySimpleRequest { Value = 42 });
     }
 
     // Load test benchmarks (existing)
