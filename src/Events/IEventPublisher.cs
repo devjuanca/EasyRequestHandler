@@ -81,21 +81,42 @@ namespace EasyRequestHandlers.Events
 
         private async Task HandleEventsAsync<TEvent>(TEvent @event, IReadOnlyList<IEventHandler<TEvent>> handlers, bool useParallelExecution, CancellationToken cancellationToken = default) where TEvent : class
         {
-            var tasks = new List<Task>();
-
-            foreach (var handler in handlers)
+            if (useParallelExecution)
             {
-                var handleTask = handler.HandleAsync(@event, cancellationToken);
-
-                if (useParallelExecution)
+                // Create a mapping of tasks to handlers for efficient lookup on failure
+                var taskHandlerPairs = handlers.Select(h => new
                 {
-                    tasks.Add(handleTask);
+                    Task = h.HandleAsync(@event, cancellationToken),
+                    Handler = h
+                }).ToList();
+
+                try
+                {
+                    await Task.WhenAll(taskHandlerPairs.Select(p => p.Task)).ConfigureAwait(false);
                 }
-                else
+                catch
+                {
+                    // Log each failed handler with its specific error
+                    foreach (var pair in taskHandlerPairs.Where(p => p.Task.IsFaulted))
+                    {
+                        foreach (var ex in pair.Task.Exception!.InnerExceptions)
+                        {
+                            _logger.LogError(ex, "Error in parallel event handler {HandlerType} for event {EventType}", 
+                                pair.Handler.GetType().Name, typeof(TEvent).Name);
+                        }
+                    }
+
+                    throw;
+                }
+            }
+            else
+            {
+                // Sequential execution - fail fast on first error
+                foreach (var handler in handlers)
                 {
                     try
                     {
-                        await handleTask.ConfigureAwait(false);
+                        await handler.HandleAsync(@event, cancellationToken).ConfigureAwait(false);
                     }
                     catch (Exception ex)
                     {
@@ -103,32 +124,6 @@ namespace EasyRequestHandlers.Events
                             handler.GetType().Name, typeof(TEvent).Name);
                         throw;
                     }
-                }
-            }
-
-            if (tasks.Count > 0)
-            {
-                try
-                {
-                    await Task.WhenAll(tasks).ConfigureAwait(false);
-                }
-                catch
-                {
-                    var failedTasks = tasks.Where(t => t.IsFaulted).ToList();
-
-                    foreach (var task in failedTasks)
-                    {
-                        var taskIndex = tasks.IndexOf(task);
-                        var handler = handlers[taskIndex];
-                        
-                        foreach (var ex in task.Exception!.InnerExceptions)
-                        {
-                            _logger.LogError(ex, "Error in parallel event handler {HandlerType} for event {EventType}", 
-                                handler.GetType().Name, typeof(TEvent).Name);
-                        }
-                    }
-
-                    throw;
                 }
             }
         }
