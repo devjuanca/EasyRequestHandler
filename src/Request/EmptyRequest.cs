@@ -13,7 +13,7 @@ namespace EasyRequestHandlers.Request
         /// <summary>
         /// Gets the singleton instance of EmptyRequest to avoid repeated allocations.
         /// </summary>
-        internal static readonly EmptyRequest Instance = new EmptyRequest();
+        public static EmptyRequest Instance { get; } = new EmptyRequest();
 
         // Private constructor to enforce singleton pattern
         private EmptyRequest() { }

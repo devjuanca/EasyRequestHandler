@@ -49,7 +49,23 @@ namespace EasyRequestHandlers.Request
         // Cache for empty arrays to avoid repeated allocations
         private static readonly object[] _emptyArray = Array.Empty<object>();
 
-        public Sender(IServiceProvider serviceProvider, RequestHandlerOptions options, ILogger<Sender> logger = null)
+        /// <summary>
+        /// Initializes a new instance of the Sender class.
+        /// </summary>
+        /// <param name="serviceProvider">The service provider for resolving dependencies.</param>
+        /// <param name="options">Configuration options for request handling.</param>
+        public Sender(IServiceProvider serviceProvider, RequestHandlerOptions options)
+            : this(serviceProvider, options, null)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the Sender class with optional logging.
+        /// </summary>
+        /// <param name="serviceProvider">The service provider for resolving dependencies.</param>
+        /// <param name="options">Configuration options for request handling.</param>
+        /// <param name="logger">Optional logger for observability.</param>
+        public Sender(IServiceProvider serviceProvider, RequestHandlerOptions options, ILogger<Sender> logger)
         {
             _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
             _options = options ?? throw new ArgumentNullException(nameof(options));
@@ -85,7 +101,7 @@ namespace EasyRequestHandlers.Request
                 // Full pipeline with hooks
                 return await ExecuteWithFullPipeline<TRequest, TResponse>(handler, request, cancellationToken).ConfigureAwait(false);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!(ex is OperationCanceledException))
             {
                 _logger?.LogError(ex, "Error processing request of type {RequestType}", typeof(TRequest).Name);
                 throw;
@@ -118,7 +134,7 @@ namespace EasyRequestHandlers.Request
                 // Full pipeline with hooks for EmptyRequest
                 return await ExecuteWithFullPipelineForEmpty(handler, emptyRequest, cancellationToken).ConfigureAwait(false);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!(ex is OperationCanceledException))
             {
                 _logger?.LogError(ex, "Error processing no-input request for response type {ResponseType}", typeof(TResponse).Name);
                 throw;
@@ -172,76 +188,68 @@ namespace EasyRequestHandlers.Request
 
             RequestHandlerDelegate<TResponse> pipeline = async () =>
             {
-                try
+                // Execute pre-hooks
+                for (int i = 0; i < preHooksList.Count; i++)
                 {
-                    // Execute pre-hooks
-                    for (int i = 0; i < preHooksList.Count; i++)
+                    try
                     {
-                        try
-                        {
-                            await preHooksList[i].OnExecutingAsync(request, cancellationToken).ConfigureAwait(false);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger?.LogError(ex, "Error executing pre-hook {HookType} for request {RequestType}", 
-                                preHooksList[i].GetType().Name, typeof(TRequest).Name);
-                            throw;
-                        }
+                        await preHooksList[i].OnExecutingAsync(request, cancellationToken).ConfigureAwait(false);
                     }
-                    
-                    for (int i = 0; i < hooksList.Count; i++)
+                    catch (Exception ex) when (!(ex is OperationCanceledException))
                     {
-                        try
-                        {
-                            await hooksList[i].OnExecutingAsync(request, cancellationToken).ConfigureAwait(false);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger?.LogError(ex, "Error executing hook (pre-phase) {HookType} for request {RequestType}", 
-                                hooksList[i].GetType().Name, typeof(TRequest).Name);
-                            throw;
-                        }
+                        _logger?.LogError(ex, "Error executing pre-hook {HookType} for request {RequestType}", 
+                            preHooksList[i].GetType().Name, typeof(TRequest).Name);
+                        throw;
                     }
-
-                    // Execute handler
-                    var response = await handler.HandleAsync(request, cancellationToken).ConfigureAwait(false);
-
-                    // Execute post-hooks
-                    for (int i = 0; i < postHooksList.Count; i++)
-                    {
-                        try
-                        {
-                            await postHooksList[i].OnExecutedAsync(request, response, cancellationToken).ConfigureAwait(false);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger?.LogError(ex, "Error executing post-hook {HookType} for request {RequestType}", 
-                                postHooksList[i].GetType().Name, typeof(TRequest).Name);
-                            throw;
-                        }
-                    }
-                    
-                    for (int i = 0; i < hooksList.Count; i++)
-                    {
-                        try
-                        {
-                            await hooksList[i].OnExecutedAsync(request, response, cancellationToken).ConfigureAwait(false);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger?.LogError(ex, "Error executing hook (post-phase) {HookType} for request {RequestType}", 
-                                hooksList[i].GetType().Name, typeof(TRequest).Name);
-                            throw;
-                        }
-                    }
-
-                    return response;
                 }
-                catch (Exception ex) when (!(ex is OperationCanceledException))
+                
+                for (int i = 0; i < hooksList.Count; i++)
                 {
-                    _logger?.LogError(ex, "Error in request pipeline for {RequestType}", typeof(TRequest).Name);
-                    throw;
+                    try
+                    {
+                        await hooksList[i].OnExecutingAsync(request, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (!(ex is OperationCanceledException))
+                    {
+                        _logger?.LogError(ex, "Error executing hook (pre-phase) {HookType} for request {RequestType}", 
+                            hooksList[i].GetType().Name, typeof(TRequest).Name);
+                        throw;
+                    }
                 }
+
+                // Execute handler
+                var response = await handler.HandleAsync(request, cancellationToken).ConfigureAwait(false);
+
+                // Execute post-hooks
+                for (int i = 0; i < postHooksList.Count; i++)
+                {
+                    try
+                    {
+                        await postHooksList[i].OnExecutedAsync(request, response, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (!(ex is OperationCanceledException))
+                    {
+                        _logger?.LogError(ex, "Error executing post-hook {HookType} for request {RequestType}", 
+                            postHooksList[i].GetType().Name, typeof(TRequest).Name);
+                        throw;
+                    }
+                }
+                
+                for (int i = 0; i < hooksList.Count; i++)
+                {
+                    try
+                    {
+                        await hooksList[i].OnExecutedAsync(request, response, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (!(ex is OperationCanceledException))
+                    {
+                        _logger?.LogError(ex, "Error executing hook (post-phase) {HookType} for request {RequestType}", 
+                            hooksList[i].GetType().Name, typeof(TRequest).Name);
+                        throw;
+                    }
+                }
+
+                return response;
             };
 
             // Apply behaviors in reverse order
@@ -301,76 +309,68 @@ namespace EasyRequestHandlers.Request
 
             RequestHandlerDelegate<TResponse> pipeline = async () =>
             {
-                try
+                // Execute pre-hooks
+                for (int i = 0; i < preHooksList.Count; i++)
                 {
-                    // Execute pre-hooks
-                    for (int i = 0; i < preHooksList.Count; i++)
+                    try
                     {
-                        try
-                        {
-                            await preHooksList[i].OnExecutingAsync(emptyRequest, cancellationToken).ConfigureAwait(false);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger?.LogError(ex, "Error executing pre-hook {HookType} for no-input request", 
-                                preHooksList[i].GetType().Name);
-                            throw;
-                        }
+                        await preHooksList[i].OnExecutingAsync(emptyRequest, cancellationToken).ConfigureAwait(false);
                     }
-                    
-                    for (int i = 0; i < hooksList.Count; i++)
+                    catch (Exception ex) when (!(ex is OperationCanceledException))
                     {
-                        try
-                        {
-                            await hooksList[i].OnExecutingAsync(emptyRequest, cancellationToken).ConfigureAwait(false);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger?.LogError(ex, "Error executing hook (pre-phase) {HookType} for no-input request", 
-                                hooksList[i].GetType().Name);
-                            throw;
-                        }
+                        _logger?.LogError(ex, "Error executing pre-hook {HookType} for no-input request", 
+                            preHooksList[i].GetType().Name);
+                        throw;
                     }
-
-                    // Execute handler
-                    var response = await handler.HandleAsync(cancellationToken).ConfigureAwait(false);
-
-                    // Execute post-hooks
-                    for (int i = 0; i < postHooksList.Count; i++)
-                    {
-                        try
-                        {
-                            await postHooksList[i].OnExecutedAsync(emptyRequest, response, cancellationToken).ConfigureAwait(false);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger?.LogError(ex, "Error executing post-hook {HookType} for no-input request", 
-                                postHooksList[i].GetType().Name);
-                            throw;
-                        }
-                    }
-                    
-                    for (int i = 0; i < hooksList.Count; i++)
-                    {
-                        try
-                        {
-                            await hooksList[i].OnExecutedAsync(emptyRequest, response, cancellationToken).ConfigureAwait(false);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger?.LogError(ex, "Error executing hook (post-phase) {HookType} for no-input request", 
-                                hooksList[i].GetType().Name);
-                            throw;
-                        }
-                    }
-
-                    return response;
                 }
-                catch (Exception ex) when (!(ex is OperationCanceledException))
+                
+                for (int i = 0; i < hooksList.Count; i++)
                 {
-                    _logger?.LogError(ex, "Error in no-input request pipeline");
-                    throw;
+                    try
+                    {
+                        await hooksList[i].OnExecutingAsync(emptyRequest, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (!(ex is OperationCanceledException))
+                    {
+                        _logger?.LogError(ex, "Error executing hook (pre-phase) {HookType} for no-input request", 
+                            hooksList[i].GetType().Name);
+                        throw;
+                    }
                 }
+
+                // Execute handler
+                var response = await handler.HandleAsync(cancellationToken).ConfigureAwait(false);
+
+                // Execute post-hooks
+                for (int i = 0; i < postHooksList.Count; i++)
+                {
+                    try
+                    {
+                        await postHooksList[i].OnExecutedAsync(emptyRequest, response, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (!(ex is OperationCanceledException))
+                    {
+                        _logger?.LogError(ex, "Error executing post-hook {HookType} for no-input request", 
+                            postHooksList[i].GetType().Name);
+                        throw;
+                    }
+                }
+                
+                for (int i = 0; i < hooksList.Count; i++)
+                {
+                    try
+                    {
+                        await hooksList[i].OnExecutedAsync(emptyRequest, response, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (!(ex is OperationCanceledException))
+                    {
+                        _logger?.LogError(ex, "Error executing hook (post-phase) {HookType} for no-input request", 
+                            hooksList[i].GetType().Name);
+                        throw;
+                    }
+                }
+
+                return response;
             };
 
             // Apply behaviors in reverse order
