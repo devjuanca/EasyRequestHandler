@@ -55,16 +55,25 @@ namespace EasyRequestHandlers.Events
         /// <param name="useParallelExecution">Determines if the handlers should run simultaneously. Default: `false`</param>
         /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
         /// <returns>A task that represents the asynchronous operation.</returns>
+        /// <exception cref="ArgumentNullException">Thrown when event is null.</exception>
         public async Task PublishAsync<TEvent>(TEvent @event, bool useParallelExecution = false, CancellationToken cancellationToken = default) where TEvent : class
         {
+            if (@event == null)
+            {
+                throw new ArgumentNullException(nameof(@event));
+            }
+
             using var scope = _scopeFactory.CreateScope();
 
             var handlers = scope.ServiceProvider.GetServices<IEventHandler<TEvent>>().ToArray();
 
             if (handlers.Length == 0)
             {
+                _logger.LogDebug("No handlers registered for event type {EventType}", typeof(TEvent).Name);
                 return;
             }
+            
+            _logger.LogDebug("Publishing event {EventType} to {HandlerCount} handler(s)", typeof(TEvent).Name, handlers.Length);
             
             await HandleEventsAsync(@event, handlers, useParallelExecution, cancellationToken);
             
@@ -72,49 +81,49 @@ namespace EasyRequestHandlers.Events
 
         private async Task HandleEventsAsync<TEvent>(TEvent @event, IReadOnlyList<IEventHandler<TEvent>> handlers, bool useParallelExecution, CancellationToken cancellationToken = default) where TEvent : class
         {
-            var tasks = new List<Task>();
-
-            foreach (var handler in handlers)
+            if (useParallelExecution)
             {
-                var handleTask = handler.HandleAsync(@event, cancellationToken);
-
-                if (useParallelExecution)
+                // Create a mapping of tasks to handlers for efficient lookup on failure
+                var taskHandlerPairs = handlers.Select(h => new
                 {
-                    tasks.Add(handleTask);
-                }
-                else
-                {
-                    try
-                    {
-                        await handleTask.ConfigureAwait(false);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "An error occurred while executing an event handler.");
-                        throw;
-                    }
-                }
-            }
+                    Task = h.HandleAsync(@event, cancellationToken),
+                    Handler = h
+                }).ToList();
 
-            if (tasks.Count > 0)
-            {
                 try
                 {
-                    await Task.WhenAll(tasks).ConfigureAwait(false);
+                    await Task.WhenAll(taskHandlerPairs.Select(p => p.Task)).ConfigureAwait(false);
                 }
                 catch
                 {
-                    var failedTasks = tasks.Where(t => t.IsFaulted);
-
-                    foreach (var task in failedTasks)
+                    // Log each failed handler with its specific error
+                    foreach (var pair in taskHandlerPairs.Where(p => p.Task.IsFaulted))
                     {
-                        foreach (var ex in task.Exception!.InnerExceptions)
+                        foreach (var ex in pair.Task.Exception!.InnerExceptions)
                         {
-                            _logger.LogError(ex, "An error occurred in an event handler.");
+                            _logger.LogError(ex, "Error in parallel event handler {HandlerType} for event {EventType}", 
+                                pair.Handler.GetType().Name, typeof(TEvent).Name);
                         }
                     }
 
                     throw;
+                }
+            }
+            else
+            {
+                // Sequential execution - fail fast on first error
+                foreach (var handler in handlers)
+                {
+                    try
+                    {
+                        await handler.HandleAsync(@event, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error executing event handler {HandlerType} for event {EventType}", 
+                            handler.GetType().Name, typeof(TEvent).Name);
+                        throw;
+                    }
                 }
             }
         }

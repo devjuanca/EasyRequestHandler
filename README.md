@@ -4,18 +4,119 @@
 
 ## ✨ Features
 
-- **Mediator Pattern**: Centralizes request handling with support for request pre/post hooks and behaviors (middleware).
-- **Flexible Request Handling**: Use `RequestHandler<TRequest, TResponse>` or `RequestHandler<TResponse>` base classes.
-- **Event Dispatching**: Handle and publish events using `IEventHandler<TEvent>`.
-- **Automatic Registration**: Register all handlers with a single method using `IServiceCollection` extensions.
+### Core Capabilities
+
+- **🎯 Mediator Pattern**: Centralizes request handling with the `ISender` interface, promoting loose coupling and separation of concerns
+- **🔄 Flexible Request Handling**: Support for both input-based (`RequestHandler<TRequest, TResponse>`) and no-input handlers (`RequestHandler<TResponse>`)
+- **📡 Event Dispatching**: Publish events to multiple handlers with support for both sequential and parallel execution
+- **🔌 Automatic Registration**: Register all handlers with a single fluent API call using `IServiceCollection` extensions
+- **🪝 Request Hooks**: Execute logic before and/or after request handling with three types of hooks:
+  - `IRequestHook<TRequest, TResponse>` - Pre and post execution
+  - `IRequestPreHook<TRequest>` - Pre-execution only
+  - `IRequestPostHook<TRequest, TResponse>` - Post-execution only
+- **🔧 Pipeline Behaviors**: Add cross-cutting concerns (logging, validation, caching, etc.) as middleware-style behaviors
+- **📝 Built-in Logging**: Optional structured logging with contextual information for debugging and monitoring
+- **⚡ Performance Optimized**: Singleton pattern for no-input requests, optimized task handling, and minimal allocations
+- **🔒 Type-Safe**: Fully generic, compile-time type checking for requests, responses, and events
+- **🧪 Testable**: Clean abstractions make unit testing straightforward
+
+### Key Benefits
+
+- **✅ Minimal Boilerplate**: Define handlers as simple classes—no complex setup required
+- **✅ DI-First Design**: Built on Microsoft.Extensions.DependencyInjection for seamless integration
+- **✅ Async by Default**: All operations use Task-based async patterns for scalability
+- **✅ Zero Breaking Changes**: Backward compatible design maintains existing functionality
+- **✅ Production Ready**: Comprehensive error handling, cancellation support, and security validated
 
 ## 📦 Installation
 
-Install from NuGet using the following command:
+Install from NuGet using the .NET CLI:
 
+```bash
+dotnet add package EasyRequestHandler
 ```
+
+Or using Package Manager Console:
+
+```powershell
 Install-Package EasyRequestHandler
 ```
+
+## 🎯 Why Choose EasyRequestHandler?
+
+### Compared to MediatR
+- **Simpler API**: No need for `IRequest<T>` marker interfaces on your request types
+- **Built-in Hooks**: Pre/post execution hooks without additional packages
+- **Event Publishing**: Native support for event dispatching with parallel execution
+- **Lightweight**: Minimal dependencies and smaller footprint
+
+### Compared to Custom Solutions
+- **Battle-Tested**: Proven patterns and comprehensive error handling
+- **Extensible**: Easy to add behaviors, hooks, and custom logic
+- **Maintained**: Regular updates and security fixes
+- **Well-Documented**: Clear examples and API documentation
+
+## 🚀 Quick Start
+
+Here's a minimal example to get started in 3 steps:
+
+### 1. Define Your Request and Handler
+
+```csharp
+// Your request
+public class CalculateRequest
+{
+    public int X { get; set; }
+    public int Y { get; set; }
+}
+
+// Your response
+public class CalculateResponse
+{
+    public int Sum { get; set; }
+}
+
+// Your handler
+public class CalculateHandler : RequestHandler<CalculateRequest, CalculateResponse>
+{
+    public override Task<CalculateResponse> HandleAsync(CalculateRequest request, CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult(new CalculateResponse { Sum = request.X + request.Y });
+    }
+}
+```
+
+### 2. Register in DI Container
+
+```csharp
+// In Program.cs or Startup.cs
+services.AddEasyRequestHandlers(typeof(Program))
+        .WithMediatorPattern()  // Optional: enable ISender
+        .Build();
+```
+
+### 3. Use in Your Application
+
+```csharp
+public class CalculatorController : ControllerBase
+{
+    private readonly ISender _sender;
+
+    public CalculatorController(ISender sender) => _sender = sender;
+
+    [HttpGet("calculate")]
+    public async Task<IActionResult> Calculate(int x, int y)
+    {
+        var result = await _sender.SendAsync<CalculateRequest, CalculateResponse>(
+            new CalculateRequest { X = x, Y = y });
+        return Ok(result);
+    }
+}
+```
+
+That's it! Your handler is automatically discovered, registered, and ready to use.
+
+---
 
 ## 🚀 Usage
 
@@ -237,6 +338,30 @@ public class MyController
 
 EasyRequestHandler provides a clean, extensible way to manage requests and events in .NET, with support for modern patterns like mediator, behaviors, and hooks—all without unnecessary boilerplate.
 
+### Perfect For
+
+- ✅ **CQRS Applications**: Separate command and query handling with clear boundaries
+- ✅ **Clean Architecture**: Enforce separation of concerns and dependency inversion
+- ✅ **Event-Driven Systems**: Publish domain events and handle them asynchronously
+- ✅ **Microservices**: Standardize request/event handling across services
+- ✅ **API Development**: Build maintainable REST APIs with consistent patterns
+
+### Getting Help
+
+- 📖 [Documentation](https://github.com/devjuanca/EasyRequestHandler) - Full API reference and examples
+- 🐛 [Issues](https://github.com/devjuanca/EasyRequestHandler/issues) - Report bugs or request features
+- 💬 [Discussions](https://github.com/devjuanca/EasyRequestHandler/discussions) - Ask questions and share ideas
+
+### Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
 ---
 
-Licensed under MIT.
+## 📄 License
+
+Licensed under [MIT License](LICENSE.txt).
+
+---
+
+**Made with ❤️ by Juan Carlos Torres Cuervo**
