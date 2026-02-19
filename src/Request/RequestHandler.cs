@@ -34,4 +34,20 @@ namespace EasyRequestHandlers.Request
         /// <returns>A task representing the asynchronous operation, with a response of type <typeparamref name="TResponse"/>.</returns>
         public abstract Task<TResponse> HandleAsync(CancellationToken cancellationToken = default);
     }
+
+    /// <summary>
+    /// Represents a base class for request handlers that process a request without returning a meaningful response.
+    /// Useful for command-style operations where the caller only needs to know whether the operation completed successfully.
+    /// </summary>
+    /// <typeparam name="TRequest">The type of the request.</typeparam>
+    public abstract class VoidRequestHandler<TRequest> : BaseHandler
+    {
+        /// <summary>
+        /// Handles the request asynchronously without returning a response.
+        /// </summary>
+        /// <param name="request">The request to be handled.</param>
+        /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+        /// <returns>A task representing the asynchronous operation.</returns>
+        public abstract Task HandleAsync(TRequest request, CancellationToken cancellationToken = default);
+    }
 }

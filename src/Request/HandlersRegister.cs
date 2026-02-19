@@ -36,7 +36,9 @@ namespace EasyRequestHandlers.Request
             {
                 var assembly = type.Assembly;
 
-                var foundHandlers = assembly.GetTypes().Where(x => typeof(BaseHandler)
+                var allTypes = assembly.GetTypes();
+
+                var foundHandlers = allTypes.Where(x => typeof(BaseHandler)
                                                        .IsAssignableFrom(x) &&
                                                         !x.IsAbstract &&
                                                         !x.IsInterface)
@@ -49,15 +51,15 @@ namespace EasyRequestHandlers.Request
 
                 if (options.EnableRequestHooks)
                 {
-                    var hookTypes = assembly.GetTypes().Where(x => !x.IsAbstract &&
+                    var hookTypes = allTypes.Where(x => !x.IsAbstract &&
                             !x.IsInterface &&
                             x.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IRequestHook<,>))).ToList();
 
-                    var preHookTypes = assembly.GetTypes().Where(x => !x.IsAbstract &&
+                    var preHookTypes = allTypes.Where(x => !x.IsAbstract &&
                             !x.IsInterface &&
                             x.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IRequestPreHook<>))).ToList();
 
-                    var postHookTypes = assembly.GetTypes().Where(x => !x.IsAbstract && 
+                    var postHookTypes = allTypes.Where(x => !x.IsAbstract && 
                             !x.IsInterface &&
                             x.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IRequestPostHook<,>))).ToList();
 
@@ -119,6 +121,11 @@ namespace EasyRequestHandlers.Request
                         {
                             services.TryAdd(new ServiceDescriptor(baseType, handler, ServiceLifetime.Scoped));
                         }
+                        // Register for VoidRequestHandler<TRequest> (void command handlers)
+                        else if (genericTypeDef == typeof(VoidRequestHandler<>))
+                        {
+                            services.TryAdd(new ServiceDescriptor(baseType, handler, ServiceLifetime.Scoped));
+                        }
                     }
                 }
                 
@@ -141,11 +148,21 @@ namespace EasyRequestHandlers.Request
 
             while (baseType != null && baseType != typeof(BaseHandler))
             {
-                if (baseType.IsGenericType && baseType.GetGenericTypeDefinition() == typeof(RequestHandler<,>))
+                if (baseType.IsGenericType)
                 {
-                    var genericArgs = baseType.GetGenericArguments();
-
-                    return $"{baseType.Name}<{genericArgs[0].FullName},{genericArgs[1].FullName}>";
+                    var genericTypeDef = baseType.GetGenericTypeDefinition();
+                    
+                    if (genericTypeDef == typeof(RequestHandler<,>))
+                    {
+                        var genericArgs = baseType.GetGenericArguments();
+                        return $"{baseType.Name}<{genericArgs[0].FullName},{genericArgs[1].FullName}>";
+                    }
+                    
+                    if (genericTypeDef == typeof(VoidRequestHandler<>))
+                    {
+                        var genericArgs = baseType.GetGenericArguments();
+                        return $"{baseType.Name}<{genericArgs[0].FullName}>";
+                    }
                 }
 
                 baseType = baseType.BaseType;

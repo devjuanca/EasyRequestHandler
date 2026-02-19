@@ -25,11 +25,11 @@ namespace EasyRequestHandlers.Events
             {
                 var assembly = type.Assembly;
 
-                var eventsHandlers = assembly.DefinedTypes.Where(a => a.GetInterfaces().Select(b => b.Name).Contains("IEventHandler`1") && !a.IsInterface && !a.IsAbstract).ToList();
+                var eventsHandlers = assembly.DefinedTypes.Where(a => a.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEventHandler<>)) && !a.IsInterface && !a.IsAbstract).ToList();
 
                 foreach (var handler in eventsHandlers)
                 {
-                    var eventInterface = handler.GetInterfaces().FirstOrDefault(a => a.Name == "IEventHandler`1") ?? throw new Exception("Events handlers must implement IEventHandler<TEvent>");
+                    var eventInterface = handler.GetInterfaces().FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEventHandler<>)) ?? throw new Exception("Events handlers must implement IEventHandler<TEvent>");
 
                     var lifetimeAttribute = handler.GetCustomAttribute<HandlerLifetimeAttribute>();
 

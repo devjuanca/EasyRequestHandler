@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-02-19
+
+### Added
+- `VoidRequestHandler<TRequest>` base class for command-style handlers that don't return a response
+- `ISender.SendAsync<TRequest>(request)` overload for fire-and-forget commands without requiring `Empty` as response type
+- 5 new tests for void handler registration and usage
+
+### Changed
+- **Performance**: Behaviors are now materialized to a list before checking count, avoiding double enumeration of `IEnumerable<IPipelineBehavior>`
+- **Performance**: Reverse iteration of behaviors uses indexed loop instead of LINQ `.Reverse()`, avoiding an extra collection allocation
+- **Performance**: `HandlersRegister` now calls `assembly.GetTypes()` once per assembly instead of up to 4 times
+- **Performance**: `EventsRegister` uses type-safe generic type comparison (`typeof(IEventHandler<>)`) instead of fragile string matching (`"IEventHandler\`1"`)
+- Handler key generation updated to support `VoidRequestHandler<TRequest>` duplicate detection
+
+### Breaking Changes
+- None - all changes are backward compatible
+
 ## [1.1.5] - 2026-02-16
 
 ### Added
@@ -57,6 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enhancements in ISender.cs included an empty array cache for memory optimization
 - Refactor of the request handling pipeline to improve behavior execution and request hooks
 
+[1.2.0]: https://github.com/devjuanca/EasyRequestHandler/compare/v1.1.5...v1.2.0
 [1.1.5]: https://github.com/devjuanca/EasyRequestHandler/compare/v1.1.4...v1.1.5
 [1.1.4]: https://github.com/devjuanca/EasyRequestHandler/compare/v1.1.3...v1.1.4
 [1.1.3]: https://github.com/devjuanca/EasyRequestHandler/releases/tag/v1.1.3

@@ -33,6 +33,17 @@ namespace EasyRequestHandlers.Request
         /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
         /// <returns>A task that represents the asynchronous operation, containing the response.</returns>
         Task<TResponse> SendAsync<TResponse>(CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Sends a command-style request to its corresponding void handler.
+        /// Use this for operations that don't return a meaningful response.
+        /// </summary>
+        /// <typeparam name="TRequest">The type of the request.</typeparam>
+        /// <param name="request">The request instance to send.</param>
+        /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+        /// <returns>A task that represents the asynchronous operation.</returns>
+        /// <exception cref="ArgumentNullException">Thrown when request is null.</exception>
+        Task SendAsync<TRequest>(TRequest request, CancellationToken cancellationToken = default);
     }
 
     /// <summary>
@@ -87,15 +98,15 @@ namespace EasyRequestHandlers.Request
 
                 if (!_options.EnableRequestHooks)
                 {
-                    var behaviorServices = _serviceProvider.GetServices<IPipelineBehavior<TRequest, TResponse>>();
+                    var behaviorsList = _serviceProvider.GetServices<IPipelineBehavior<TRequest, TResponse>>().ToList();
 
-                    if (!behaviorServices.Any())
+                    if (behaviorsList.Count == 0)
                     {
                         return await handler.HandleAsync(request, cancellationToken).ConfigureAwait(false);
                     }
                     
                     // Only behaviors, no hooks - simplified pipeline
-                    return await ExecuteWithBehaviorsOnly(handler, behaviorServices, request, cancellationToken).ConfigureAwait(false);
+                    return await ExecuteWithBehaviorsOnly(handler, behaviorsList, request, cancellationToken).ConfigureAwait(false);
                 }
 
                 // Full pipeline with hooks
@@ -121,14 +132,14 @@ namespace EasyRequestHandlers.Request
 
                 if (!_options.EnableRequestHooks)
                 {
-                    var behaviorServices = _serviceProvider.GetServices<IPipelineBehavior<EmptyRequest, TResponse>>();
+                    var behaviorsList = _serviceProvider.GetServices<IPipelineBehavior<EmptyRequest, TResponse>>().ToList();
 
-                    if (!behaviorServices.Any())
+                    if (behaviorsList.Count == 0)
                     {
                         return await handler.HandleAsync(cancellationToken).ConfigureAwait(false);
                     }
 
-                    return await ExecuteWithBehaviorsOnlyForEmpty(handler, behaviorServices, emptyRequest, cancellationToken).ConfigureAwait(false);
+                    return await ExecuteWithBehaviorsOnlyForEmpty(handler, behaviorsList, emptyRequest, cancellationToken).ConfigureAwait(false);
                 }
 
                 // Full pipeline with hooks for EmptyRequest
@@ -141,17 +152,39 @@ namespace EasyRequestHandlers.Request
             }
         }
 
+        public async Task SendAsync<TRequest>(TRequest request, CancellationToken cancellationToken = default)
+        {
+            if (request == null)
+            {
+                throw new ArgumentNullException(nameof(request));
+            }
+
+            try
+            {
+                _logger?.LogDebug("Processing void request of type {RequestType}", typeof(TRequest).Name);
+
+                var handler = (VoidRequestHandler<TRequest>)GetHandler(typeof(VoidRequestHandler<TRequest>));
+
+                await handler.HandleAsync(request, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (!(ex is OperationCanceledException))
+            {
+                _logger?.LogError(ex, "Error processing void request of type {RequestType}", typeof(TRequest).Name);
+                throw;
+            }
+        }
+
         private Task<TResponse> ExecuteWithBehaviorsOnly<TRequest, TResponse>(
             RequestHandler<TRequest, TResponse> handler,
-            IEnumerable<IPipelineBehavior<TRequest, TResponse>> behaviors,
+            IReadOnlyList<IPipelineBehavior<TRequest, TResponse>> behaviors,
             TRequest request,
             CancellationToken cancellationToken)
         {
             RequestHandlerDelegate<TResponse> pipeline = () => handler.HandleAsync(request, cancellationToken);
             
-            foreach (var behavior in behaviors.Reverse())
+            for (int i = behaviors.Count - 1; i >= 0; i--)
             {
-                var currentBehavior = behavior;
+                var currentBehavior = behaviors[i];
                 var next = pipeline;
                 pipeline = () => currentBehavior.Handle(request, cancellationToken, next);
             }
@@ -265,15 +298,15 @@ namespace EasyRequestHandlers.Request
 
         private Task<TResponse> ExecuteWithBehaviorsOnlyForEmpty<TResponse>(
             RequestHandler<TResponse> handler,
-            IEnumerable<IPipelineBehavior<EmptyRequest, TResponse>> behaviors,
+            IReadOnlyList<IPipelineBehavior<EmptyRequest, TResponse>> behaviors,
             EmptyRequest emptyRequest,
             CancellationToken cancellationToken)
         {
             RequestHandlerDelegate<TResponse> pipeline = () => handler.HandleAsync(cancellationToken);
             
-            foreach (var behavior in behaviors.Reverse())
+            for (int i = behaviors.Count - 1; i >= 0; i--)
             {
-                var currentBehavior = behavior;
+                var currentBehavior = behaviors[i];
                 var next = pipeline;
                 pipeline = () => currentBehavior.Handle(emptyRequest, cancellationToken, next);
             }
