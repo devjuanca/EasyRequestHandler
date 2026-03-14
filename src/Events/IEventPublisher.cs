@@ -84,7 +84,7 @@ namespace EasyRequestHandlers.Events
                 throw new ArgumentNullException(nameof(options));
             }
 
-            if (options.FireAndForgetTimeout.HasValue && options.FireAndForgetTimeout.Value <= TimeSpan.Zero)
+            if (options.FireAndForget && options.FireAndForgetTimeout.HasValue && options.FireAndForgetTimeout.Value <= TimeSpan.Zero)
             {
                 throw new ArgumentOutOfRangeException(nameof(options), "FireAndForgetTimeout must be a positive value.");
             }
