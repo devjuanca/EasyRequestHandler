@@ -1,5 +1,6 @@
-﻿using EasyRequestHandlers.Common;
+using EasyRequestHandlers.Common;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using System;
 using System.Linq;
 using System.Reflection;
@@ -25,35 +26,29 @@ namespace EasyRequestHandlers.Events
             {
                 var assembly = type.Assembly;
 
-                var eventsHandlers = assembly.DefinedTypes.Where(a => a.GetInterfaces().Select(b => b.Name).Contains("IEventHandler`1") && !a.IsInterface && !a.IsAbstract).ToList();
-
-                foreach (var handler in eventsHandlers)
+                foreach (var handler in assembly.DefinedTypes)
                 {
-                    var eventInterface = handler.GetInterfaces().FirstOrDefault(a => a.Name == "IEventHandler`1") ?? throw new Exception("Events handlers must implement IEventHandler<TEvent>");
-
-                    var lifetimeAttribute = handler.GetCustomAttribute<HandlerLifetimeAttribute>();
-
-                    if (lifetimeAttribute == null)
+                    if (handler.IsInterface || handler.IsAbstract)
                     {
-                        services.AddTransient(eventInterface, handler);
                         continue;
                     }
-                    switch (lifetimeAttribute.Lifetime)
+
+                    var eventInterface = handler.GetInterfaces()
+                        .FirstOrDefault(a => a.IsGenericType && a.GetGenericTypeDefinition() == typeof(IEventHandler<>));
+
+                    if (eventInterface == null)
                     {
-                        case ServiceLifetime.Singleton:
-                            services.AddSingleton(eventInterface, handler);
-                            break;
-                        case ServiceLifetime.Scoped:
-                            services.AddScoped(eventInterface, handler);
-                            break;
-                        case ServiceLifetime.Transient:
-                            services.AddTransient(eventInterface, handler);
-                            break;
+                        continue;
                     }
+
+                    var lifetime = handler.GetCustomAttribute<HandlerLifetimeAttribute>()?.Lifetime
+                                   ?? ServiceLifetime.Transient;
+
+                    services.TryAddEnumerable(new ServiceDescriptor(eventInterface, handler, lifetime));
                 }
             }
 
-            services.AddSingleton<IEventPublisher, EventPublisher>();
+            services.TryAddSingleton<IEventPublisher, EventPublisher>();
 
             return services;
         }

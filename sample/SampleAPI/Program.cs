@@ -1,3 +1,4 @@
+using EasyRequestHandlers.Events;
 using SampleAPI.Behaviors;
 using SampleAPI.Dtos;
 using SampleAPI.Events.Notification;
@@ -55,7 +56,7 @@ app.MapPost("/weather-forecast", async (CreateCityForecastCommand command, ISend
 
 app.MapPost("/notification", async (NotificationEvent @event, IEventPublisher publisher, CancellationToken cancellationToken) =>
 {
-    await publisher.PublishAsync(@event, useParallelExecution: true, cancellationToken);
+    await publisher.PublishAsync(@event, new EventPublishOptions { UseParallelExecution = true }, cancellationToken);
 
     return Results.NoContent();
 });

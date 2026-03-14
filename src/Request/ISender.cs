@@ -1,10 +1,8 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -44,11 +42,6 @@ namespace EasyRequestHandlers.Request
         private readonly RequestHandlerOptions _options;
         private readonly ILogger<Sender> _logger;
 
-        private static readonly ConcurrentDictionary<Type, Func<IServiceProvider, object>> _factoryCache = new ConcurrentDictionary<Type, Func<IServiceProvider, object>>();
-        
-        // Cache for empty arrays to avoid repeated allocations
-        private static readonly object[] _emptyArray = Array.Empty<object>();
-
         /// <summary>
         /// Initializes a new instance of the Sender class.
         /// </summary>
@@ -72,90 +65,78 @@ namespace EasyRequestHandlers.Request
             _logger = logger;
         }
 
-        public async Task<TResponse> SendAsync<TRequest, TResponse>(TRequest request, CancellationToken cancellationToken = default)
+        public Task<TResponse> SendAsync<TRequest, TResponse>(TRequest request, CancellationToken cancellationToken = default)
         {
             if (request == null)
             {
                 throw new ArgumentNullException(nameof(request));
             }
 
-            try
+            if (_logger != null && _logger.IsEnabled(LogLevel.Debug))
             {
-                _logger?.LogDebug("Processing request of type {RequestType}", typeof(TRequest).Name);
-
-                var handler = (RequestHandler<TRequest, TResponse>)GetHandler(typeof(RequestHandler<TRequest, TResponse>));
-
-                if (!_options.EnableRequestHooks)
-                {
-                    var behaviorServices = _serviceProvider.GetServices<IPipelineBehavior<TRequest, TResponse>>();
-
-                    if (!behaviorServices.Any())
-                    {
-                        return await handler.HandleAsync(request, cancellationToken).ConfigureAwait(false);
-                    }
-                    
-                    // Only behaviors, no hooks - simplified pipeline
-                    return await ExecuteWithBehaviorsOnly(handler, behaviorServices, request, cancellationToken).ConfigureAwait(false);
-                }
-
-                // Full pipeline with hooks
-                return await ExecuteWithFullPipeline<TRequest, TResponse>(handler, request, cancellationToken).ConfigureAwait(false);
+                _logger.LogDebug("Processing request of type {RequestType}", typeof(TRequest).Name);
             }
-            catch (Exception ex) when (!(ex is OperationCanceledException))
+
+            var handler = _serviceProvider.GetRequiredService<RequestHandler<TRequest, TResponse>>();
+
+            // Fast path: no behaviors and no hooks — skip all pipeline overhead
+            if (!_options.HasBehaviors && !_options.EnableRequestHooks)
             {
-                _logger?.LogError(ex, "Error processing request of type {RequestType}", typeof(TRequest).Name);
-                throw;
+                return handler.HandleAsync(request, cancellationToken);
             }
+
+            if (!_options.EnableRequestHooks)
+            {
+                return ExecuteWithBehaviorsOnly(handler, request, cancellationToken);
+            }
+
+            return ExecuteWithFullPipeline(handler, request, cancellationToken);
         }
 
-        public async Task<TResponse> SendAsync<TResponse>(CancellationToken cancellationToken = default)
+        public Task<TResponse> SendAsync<TResponse>(CancellationToken cancellationToken = default)
         {
-            try
+            if (_logger != null && _logger.IsEnabled(LogLevel.Debug))
             {
-                _logger?.LogDebug("Processing no-input request for response type {ResponseType}", typeof(TResponse).Name);
-
-                var handler = _serviceProvider.GetRequiredService<RequestHandler<TResponse>>();
-
-                // Use singleton EmptyRequest instance
-                var emptyRequest = EmptyRequest.Instance;
-
-                if (!_options.EnableRequestHooks)
-                {
-                    var behaviorServices = _serviceProvider.GetServices<IPipelineBehavior<EmptyRequest, TResponse>>();
-
-                    if (!behaviorServices.Any())
-                    {
-                        return await handler.HandleAsync(cancellationToken).ConfigureAwait(false);
-                    }
-
-                    return await ExecuteWithBehaviorsOnlyForEmpty(handler, behaviorServices, emptyRequest, cancellationToken).ConfigureAwait(false);
-                }
-
-                // Full pipeline with hooks for EmptyRequest
-                return await ExecuteWithFullPipelineForEmpty(handler, emptyRequest, cancellationToken).ConfigureAwait(false);
+                _logger.LogDebug("Processing no-input request for response type {ResponseType}", typeof(TResponse).Name);
             }
-            catch (Exception ex) when (!(ex is OperationCanceledException))
+
+            var handler = _serviceProvider.GetRequiredService<RequestHandler<TResponse>>();
+
+            // Fast path: no behaviors and no hooks
+            if (!_options.HasBehaviors && !_options.EnableRequestHooks)
             {
-                _logger?.LogError(ex, "Error processing no-input request for response type {ResponseType}", typeof(TResponse).Name);
-                throw;
+                return handler.HandleAsync(cancellationToken);
             }
+
+            if (!_options.EnableRequestHooks)
+            {
+                return ExecuteWithBehaviorsOnlyForEmpty(handler, EmptyRequest.Instance, cancellationToken);
+            }
+
+            return ExecuteWithFullPipelineForEmpty(handler, EmptyRequest.Instance, cancellationToken);
         }
 
         private Task<TResponse> ExecuteWithBehaviorsOnly<TRequest, TResponse>(
             RequestHandler<TRequest, TResponse> handler,
-            IEnumerable<IPipelineBehavior<TRequest, TResponse>> behaviors,
             TRequest request,
             CancellationToken cancellationToken)
         {
-            RequestHandlerDelegate<TResponse> pipeline = () => handler.HandleAsync(request, cancellationToken);
-            
-            foreach (var behavior in behaviors.Reverse())
+            var behaviorServices = _serviceProvider.GetServices<IPipelineBehavior<TRequest, TResponse>>().ToArray();
+
+            if (behaviorServices.Length == 0)
             {
-                var currentBehavior = behavior;
-                var next = pipeline;
-                pipeline = () => currentBehavior.Handle(request, cancellationToken, next);
+                return handler.HandleAsync(request, cancellationToken);
             }
-            
+
+            RequestHandlerDelegate<TResponse> pipeline = () => handler.HandleAsync(request, cancellationToken);
+
+            for (int i = behaviorServices.Length - 1; i >= 0; i--)
+            {
+                var behavior = behaviorServices[i];
+                var next = pipeline;
+                pipeline = () => behavior.Handle(request, cancellationToken, next);
+            }
+
             return pipeline();
         }
 
@@ -164,87 +145,75 @@ namespace EasyRequestHandlers.Request
             TRequest request,
             CancellationToken cancellationToken)
         {
+            var behaviorsArray = _options.HasBehaviors
+                ? _serviceProvider.GetServices<IPipelineBehavior<TRequest, TResponse>>().ToArray()
+                : Array.Empty<IPipelineBehavior<TRequest, TResponse>>();
 
-            var behaviors = _serviceProvider.GetServices<IPipelineBehavior<TRequest, TResponse>>();
+            var hooksArray = _serviceProvider.GetServices<IRequestHook<TRequest, TResponse>>().ToArray();
+            var preHooksArray = _serviceProvider.GetServices<IRequestPreHook<TRequest>>().ToArray();
+            var postHooksArray = _serviceProvider.GetServices<IRequestPostHook<TRequest, TResponse>>().ToArray();
 
-            var hooks = _serviceProvider.GetServices<IRequestHook<TRequest, TResponse>>();
-
-            var preHooks = _serviceProvider.GetServices<IRequestPreHook<TRequest>>();
-
-            var postHooks = _serviceProvider.GetServices<IRequestPostHook<TRequest, TResponse>>();
-
-            var behaviorsList = behaviors.ToList();
-
-            var hooksList = hooks.ToList();
-
-            var preHooksList = preHooks.ToList();
-
-            var postHooksList = postHooks.ToList();
-
-            if (behaviorsList.Count == 0 && hooksList.Count == 0 && preHooksList.Count == 0 && postHooksList.Count == 0)
+            if (behaviorsArray.Length == 0 && hooksArray.Length == 0 && preHooksArray.Length == 0 && postHooksArray.Length == 0)
             {
                 return handler.HandleAsync(request, cancellationToken);
             }
 
             RequestHandlerDelegate<TResponse> pipeline = async () =>
             {
-                // Execute pre-hooks
-                for (int i = 0; i < preHooksList.Count; i++)
+                for (int i = 0; i < preHooksArray.Length; i++)
                 {
                     try
                     {
-                        await preHooksList[i].OnExecutingAsync(request, cancellationToken).ConfigureAwait(false);
+                        await preHooksArray[i].OnExecutingAsync(request, cancellationToken).ConfigureAwait(false);
                     }
                     catch (Exception ex) when (!(ex is OperationCanceledException))
                     {
-                        _logger?.LogError(ex, "Error executing pre-hook {HookType} for request {RequestType}", 
-                            preHooksList[i].GetType().Name, typeof(TRequest).Name);
-                        throw;
-                    }
-                }
-                
-                for (int i = 0; i < hooksList.Count; i++)
-                {
-                    try
-                    {
-                        await hooksList[i].OnExecutingAsync(request, cancellationToken).ConfigureAwait(false);
-                    }
-                    catch (Exception ex) when (!(ex is OperationCanceledException))
-                    {
-                        _logger?.LogError(ex, "Error executing hook (pre-phase) {HookType} for request {RequestType}", 
-                            hooksList[i].GetType().Name, typeof(TRequest).Name);
+                        _logger?.LogError(ex, "Error executing pre-hook {HookType} for request {RequestType}",
+                            preHooksArray[i].GetType().Name, typeof(TRequest).Name);
                         throw;
                     }
                 }
 
-                // Execute handler
+                for (int i = 0; i < hooksArray.Length; i++)
+                {
+                    try
+                    {
+                        await hooksArray[i].OnExecutingAsync(request, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (!(ex is OperationCanceledException))
+                    {
+                        _logger?.LogError(ex, "Error executing hook (pre-phase) {HookType} for request {RequestType}",
+                            hooksArray[i].GetType().Name, typeof(TRequest).Name);
+                        throw;
+                    }
+                }
+
                 var response = await handler.HandleAsync(request, cancellationToken).ConfigureAwait(false);
 
-                // Execute post-hooks
-                for (int i = 0; i < postHooksList.Count; i++)
+                for (int i = 0; i < postHooksArray.Length; i++)
                 {
                     try
                     {
-                        await postHooksList[i].OnExecutedAsync(request, response, cancellationToken).ConfigureAwait(false);
+                        await postHooksArray[i].OnExecutedAsync(request, response, cancellationToken).ConfigureAwait(false);
                     }
                     catch (Exception ex) when (!(ex is OperationCanceledException))
                     {
-                        _logger?.LogError(ex, "Error executing post-hook {HookType} for request {RequestType}", 
-                            postHooksList[i].GetType().Name, typeof(TRequest).Name);
+                        _logger?.LogError(ex, "Error executing post-hook {HookType} for request {RequestType}",
+                            postHooksArray[i].GetType().Name, typeof(TRequest).Name);
                         throw;
                     }
                 }
-                
-                for (int i = 0; i < hooksList.Count; i++)
+
+                for (int i = 0; i < hooksArray.Length; i++)
                 {
                     try
                     {
-                        await hooksList[i].OnExecutedAsync(request, response, cancellationToken).ConfigureAwait(false);
+                        await hooksArray[i].OnExecutedAsync(request, response, cancellationToken).ConfigureAwait(false);
                     }
                     catch (Exception ex) when (!(ex is OperationCanceledException))
                     {
-                        _logger?.LogError(ex, "Error executing hook (post-phase) {HookType} for request {RequestType}", 
-                            hooksList[i].GetType().Name, typeof(TRequest).Name);
+                        _logger?.LogError(ex, "Error executing hook (post-phase) {HookType} for request {RequestType}",
+                            hooksArray[i].GetType().Name, typeof(TRequest).Name);
                         throw;
                     }
                 }
@@ -252,10 +221,9 @@ namespace EasyRequestHandlers.Request
                 return response;
             };
 
-            // Apply behaviors in reverse order
-            for (int i = behaviorsList.Count - 1; i >= 0; i--)
+            for (int i = behaviorsArray.Length - 1; i >= 0; i--)
             {
-                var behavior = behaviorsList[i];
+                var behavior = behaviorsArray[i];
                 var next = pipeline;
                 pipeline = () => behavior.Handle(request, cancellationToken, next);
             }
@@ -265,19 +233,25 @@ namespace EasyRequestHandlers.Request
 
         private Task<TResponse> ExecuteWithBehaviorsOnlyForEmpty<TResponse>(
             RequestHandler<TResponse> handler,
-            IEnumerable<IPipelineBehavior<EmptyRequest, TResponse>> behaviors,
             EmptyRequest emptyRequest,
             CancellationToken cancellationToken)
         {
-            RequestHandlerDelegate<TResponse> pipeline = () => handler.HandleAsync(cancellationToken);
-            
-            foreach (var behavior in behaviors.Reverse())
+            var behaviorServices = _serviceProvider.GetServices<IPipelineBehavior<EmptyRequest, TResponse>>().ToArray();
+
+            if (behaviorServices.Length == 0)
             {
-                var currentBehavior = behavior;
-                var next = pipeline;
-                pipeline = () => currentBehavior.Handle(emptyRequest, cancellationToken, next);
+                return handler.HandleAsync(cancellationToken);
             }
-            
+
+            RequestHandlerDelegate<TResponse> pipeline = () => handler.HandleAsync(cancellationToken);
+
+            for (int i = behaviorServices.Length - 1; i >= 0; i--)
+            {
+                var behavior = behaviorServices[i];
+                var next = pipeline;
+                pipeline = () => behavior.Handle(emptyRequest, cancellationToken, next);
+            }
+
             return pipeline();
         }
 
@@ -286,86 +260,75 @@ namespace EasyRequestHandlers.Request
             EmptyRequest emptyRequest,
             CancellationToken cancellationToken)
         {
-            var behaviors = _serviceProvider.GetServices<IPipelineBehavior<EmptyRequest, TResponse>>();
+            var behaviorsArray = _options.HasBehaviors
+                ? _serviceProvider.GetServices<IPipelineBehavior<EmptyRequest, TResponse>>().ToArray()
+                : Array.Empty<IPipelineBehavior<EmptyRequest, TResponse>>();
 
-            var hooks = _serviceProvider.GetServices<IRequestHook<EmptyRequest, TResponse>>();
+            var hooksArray = _serviceProvider.GetServices<IRequestHook<EmptyRequest, TResponse>>().ToArray();
+            var preHooksArray = _serviceProvider.GetServices<IRequestPreHook<EmptyRequest>>().ToArray();
+            var postHooksArray = _serviceProvider.GetServices<IRequestPostHook<EmptyRequest, TResponse>>().ToArray();
 
-            var preHooks = _serviceProvider.GetServices<IRequestPreHook<EmptyRequest>>();
-
-            var postHooks = _serviceProvider.GetServices<IRequestPostHook<EmptyRequest, TResponse>>();
-
-            var behaviorsList = behaviors.ToList();
-
-            var hooksList = hooks.ToList();
-
-            var preHooksList = preHooks.ToList();
-
-            var postHooksList = postHooks.ToList();
-
-            if (behaviorsList.Count == 0 && hooksList.Count == 0 && preHooksList.Count == 0 && postHooksList.Count == 0)
+            if (behaviorsArray.Length == 0 && hooksArray.Length == 0 && preHooksArray.Length == 0 && postHooksArray.Length == 0)
             {
                 return handler.HandleAsync(cancellationToken);
             }
 
             RequestHandlerDelegate<TResponse> pipeline = async () =>
             {
-                // Execute pre-hooks
-                for (int i = 0; i < preHooksList.Count; i++)
+                for (int i = 0; i < preHooksArray.Length; i++)
                 {
                     try
                     {
-                        await preHooksList[i].OnExecutingAsync(emptyRequest, cancellationToken).ConfigureAwait(false);
+                        await preHooksArray[i].OnExecutingAsync(emptyRequest, cancellationToken).ConfigureAwait(false);
                     }
                     catch (Exception ex) when (!(ex is OperationCanceledException))
                     {
-                        _logger?.LogError(ex, "Error executing pre-hook {HookType} for no-input request", 
-                            preHooksList[i].GetType().Name);
-                        throw;
-                    }
-                }
-                
-                for (int i = 0; i < hooksList.Count; i++)
-                {
-                    try
-                    {
-                        await hooksList[i].OnExecutingAsync(emptyRequest, cancellationToken).ConfigureAwait(false);
-                    }
-                    catch (Exception ex) when (!(ex is OperationCanceledException))
-                    {
-                        _logger?.LogError(ex, "Error executing hook (pre-phase) {HookType} for no-input request", 
-                            hooksList[i].GetType().Name);
+                        _logger?.LogError(ex, "Error executing pre-hook {HookType} for no-input request",
+                            preHooksArray[i].GetType().Name);
                         throw;
                     }
                 }
 
-                // Execute handler
+                for (int i = 0; i < hooksArray.Length; i++)
+                {
+                    try
+                    {
+                        await hooksArray[i].OnExecutingAsync(emptyRequest, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (!(ex is OperationCanceledException))
+                    {
+                        _logger?.LogError(ex, "Error executing hook (pre-phase) {HookType} for no-input request",
+                            hooksArray[i].GetType().Name);
+                        throw;
+                    }
+                }
+
                 var response = await handler.HandleAsync(cancellationToken).ConfigureAwait(false);
 
-                // Execute post-hooks
-                for (int i = 0; i < postHooksList.Count; i++)
+                for (int i = 0; i < postHooksArray.Length; i++)
                 {
                     try
                     {
-                        await postHooksList[i].OnExecutedAsync(emptyRequest, response, cancellationToken).ConfigureAwait(false);
+                        await postHooksArray[i].OnExecutedAsync(emptyRequest, response, cancellationToken).ConfigureAwait(false);
                     }
                     catch (Exception ex) when (!(ex is OperationCanceledException))
                     {
-                        _logger?.LogError(ex, "Error executing post-hook {HookType} for no-input request", 
-                            postHooksList[i].GetType().Name);
+                        _logger?.LogError(ex, "Error executing post-hook {HookType} for no-input request",
+                            postHooksArray[i].GetType().Name);
                         throw;
                     }
                 }
-                
-                for (int i = 0; i < hooksList.Count; i++)
+
+                for (int i = 0; i < hooksArray.Length; i++)
                 {
                     try
                     {
-                        await hooksList[i].OnExecutedAsync(emptyRequest, response, cancellationToken).ConfigureAwait(false);
+                        await hooksArray[i].OnExecutedAsync(emptyRequest, response, cancellationToken).ConfigureAwait(false);
                     }
                     catch (Exception ex) when (!(ex is OperationCanceledException))
                     {
-                        _logger?.LogError(ex, "Error executing hook (post-phase) {HookType} for no-input request", 
-                            hooksList[i].GetType().Name);
+                        _logger?.LogError(ex, "Error executing hook (post-phase) {HookType} for no-input request",
+                            hooksArray[i].GetType().Name);
                         throw;
                     }
                 }
@@ -373,40 +336,14 @@ namespace EasyRequestHandlers.Request
                 return response;
             };
 
-            // Apply behaviors in reverse order
-            for (int i = behaviorsList.Count - 1; i >= 0; i--)
+            for (int i = behaviorsArray.Length - 1; i >= 0; i--)
             {
-                var behavior = behaviorsList[i];
+                var behavior = behaviorsArray[i];
                 var next = pipeline;
                 pipeline = () => behavior.Handle(emptyRequest, cancellationToken, next);
             }
 
             return pipeline();
         }
-
-        private object GetHandler(Type type)
-        {
-            var factory = _factoryCache.GetOrAdd(type, CreateFactory);
-
-            return factory(_serviceProvider);
-        }
-
-        private static Func<IServiceProvider, object> CreateFactory(Type type)
-        {
-            var providerParam = Expression.Parameter(typeof(IServiceProvider), "provider");
-
-            var getServiceCall = Expression.Call(
-                typeof(ServiceProviderServiceExtensions),
-                nameof(ServiceProviderServiceExtensions.GetRequiredService),
-                new[] { type },
-                providerParam
-            );
-
-            var castResult = Expression.Convert(getServiceCall, typeof(object));
-            var lambda = Expression.Lambda<Func<IServiceProvider, object>>(castResult, providerParam);
-
-            return lambda.Compile();
-        }
     }
 }
-

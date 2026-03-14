@@ -36,7 +36,9 @@ namespace EasyRequestHandlers.Request
             {
                 var assembly = type.Assembly;
 
-                var foundHandlers = assembly.GetTypes().Where(x => typeof(BaseHandler)
+                var allTypes = assembly.GetTypes();
+
+                var foundHandlers = allTypes.Where(x => typeof(BaseHandler)
                                                        .IsAssignableFrom(x) &&
                                                         !x.IsAbstract &&
                                                         !x.IsInterface)
@@ -49,43 +51,20 @@ namespace EasyRequestHandlers.Request
 
                 if (options.EnableRequestHooks)
                 {
-                    var hookTypes = assembly.GetTypes().Where(x => !x.IsAbstract &&
-                            !x.IsInterface &&
-                            x.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IRequestHook<,>))).ToList();
-
-                    var preHookTypes = assembly.GetTypes().Where(x => !x.IsAbstract &&
-                            !x.IsInterface &&
-                            x.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IRequestPreHook<>))).ToList();
-
-                    var postHookTypes = assembly.GetTypes().Where(x => !x.IsAbstract && 
-                            !x.IsInterface &&
-                            x.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IRequestPostHook<,>))).ToList();
-
-                    foreach (var hookType in hookTypes)
+                    foreach (var t in allTypes)
                     {
-                        var interfaces = hookType.GetInterfaces().Where(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IRequestHook<,>));
+                        if (t.IsAbstract || t.IsInterface) continue;
 
-                        foreach (var hookInterface in interfaces)
+                        foreach (var iface in t.GetInterfaces())
                         {
-                            services.TryAdd(new ServiceDescriptor(hookInterface, hookType, ServiceLifetime.Transient));
-                        }
-                    }
+                            if (!iface.IsGenericType) continue;
 
-                    foreach (var preHookType in preHookTypes)
-                    {
-                        var interfaces = preHookType.GetInterfaces().Where(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IRequestPreHook<>));
-                        foreach (var preHookInterface in interfaces)
-                        {
-                            services.TryAdd(new ServiceDescriptor(preHookInterface, preHookType, ServiceLifetime.Transient));
-                        }
-                    }
+                            var def = iface.GetGenericTypeDefinition();
 
-                    foreach (var postHookType in postHookTypes)
-                    {
-                        var interfaces = postHookType.GetInterfaces().Where(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IRequestPostHook<,>));
-                        foreach (var postHookInterface in interfaces)
-                        {
-                            services.TryAdd(new ServiceDescriptor(postHookInterface, postHookType, ServiceLifetime.Transient));
+                            if (def == typeof(IRequestHook<,>) || def == typeof(IRequestPreHook<>) || def == typeof(IRequestPostHook<,>))
+                            {
+                                services.TryAdd(new ServiceDescriptor(iface, t, ServiceLifetime.Transient));
+                            }
                         }
                     }
                 }
@@ -141,11 +120,21 @@ namespace EasyRequestHandlers.Request
 
             while (baseType != null && baseType != typeof(BaseHandler))
             {
-                if (baseType.IsGenericType && baseType.GetGenericTypeDefinition() == typeof(RequestHandler<,>))
+                if (baseType.IsGenericType)
                 {
-                    var genericArgs = baseType.GetGenericArguments();
+                    var genericTypeDef = baseType.GetGenericTypeDefinition();
 
-                    return $"{baseType.Name}<{genericArgs[0].FullName},{genericArgs[1].FullName}>";
+                    if (genericTypeDef == typeof(RequestHandler<,>))
+                    {
+                        var genericArgs = baseType.GetGenericArguments();
+                        return $"{baseType.Name}<{genericArgs[0].FullName},{genericArgs[1].FullName}>";
+                    }
+
+                    if (genericTypeDef == typeof(RequestHandler<>))
+                    {
+                        var genericArgs = baseType.GetGenericArguments();
+                        return $"{baseType.Name}<{genericArgs[0].FullName}>";
+                    }
                 }
 
                 baseType = baseType.BaseType;
