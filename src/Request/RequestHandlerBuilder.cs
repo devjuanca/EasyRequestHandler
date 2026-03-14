@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using System;
 using System.Linq;
@@ -13,7 +13,7 @@ namespace EasyRequestHandlers.Request
 
         private readonly Type[] _assemblyMarkers;
 
-        public RequestHandlerBuilder(IServiceCollection services, RequestHandlerOptions options, Type[] assemblyMarkers)
+        internal RequestHandlerBuilder(IServiceCollection services, RequestHandlerOptions options, Type[] assemblyMarkers)
         {
             _services = services;
 
@@ -30,37 +30,18 @@ namespace EasyRequestHandlers.Request
         }
 
         public RequestHandlerBuilder WithBehavior(Type openGenericBehavior)
-        {
-            if (!_options.EnableMediatorPattern)
-            {
-                return this;
-            }
-
-            if (!openGenericBehavior.IsGenericTypeDefinition)
-                throw new ArgumentException("Type must be an open generic like typeof(MyBehavior<,>)");
-
-            var implementsInterface = openGenericBehavior.GetInterfaces()
-                .Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IPipelineBehavior<,>));
-
-            if (!implementsInterface)
-                throw new ArgumentException($"Type {openGenericBehavior.Name} must implement IPipelineBehavior<,>");
-
-            _services.TryAddEnumerable(
-                ServiceDescriptor.Transient(typeof(IPipelineBehavior<,>), openGenericBehavior));
-
-            return this;
-        }
+            => WithBehaviors(openGenericBehavior);
 
         public RequestHandlerBuilder WithBehaviors(params Type[] behaviorTypes)
         {
             if (!_options.EnableMediatorPattern)
             {
-                return this;
+                throw new InvalidOperationException("Call .WithMediatorPattern() before registering behaviors.");
             }
 
             foreach (var behaviorType in behaviorTypes)
             {
-                if (!behaviorType.IsGenericTypeDefinition || behaviorType.GetGenericTypeDefinition() != behaviorType)
+                if (!behaviorType.IsGenericTypeDefinition)
                 {
                     throw new ArgumentException($"Behavior type {behaviorType.Name} must be an open generic type, e.g. LoggingBehavior<,>");
                 }
@@ -75,6 +56,8 @@ namespace EasyRequestHandlers.Request
 
                 _services.TryAddEnumerable(ServiceDescriptor.Transient(typeof(IPipelineBehavior<,>), behaviorType));
             }
+
+            _options.HasBehaviors = true;
 
             return this;
         }

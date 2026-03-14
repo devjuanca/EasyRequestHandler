@@ -11,15 +11,13 @@ namespace Benchmarks.Benchmarks;
 
 [MemoryDiagnoser]
 [Orderer(SummaryOrderPolicy.FastestToSlowest)]
-[SimpleJob(warmupCount: 3, iterationCount: 10)]
+[SimpleJob(warmupCount: 5, iterationCount: 20)]
 
 public class RequestHandlerBenchmarks
 {
     private IServiceProvider _easyRequestServiceProvider = null!;
     private IServiceProvider _mediatRServiceProvider = null!;
     private IServiceProvider _easyDirectServiceProvider = null!;
-    private ISender _easyRequestSender = null!;
-    private IMediator _mediator = null!;
     private MediatRComplexRequest _mediatRComplexRequest = null!;
     private EasyComplexRequest _easyComplexRequest = null!;
 
@@ -39,8 +37,6 @@ public class RequestHandlerBenchmarks
 
         _easyRequestServiceProvider = easyRequestServices.BuildServiceProvider();
 
-        _easyRequestSender = _easyRequestServiceProvider.GetRequiredService<ISender>();
-
         // Setup MediatR
         var mediatRServices = new ServiceCollection();
 
@@ -54,8 +50,6 @@ public class RequestHandlerBenchmarks
         });
 
         _mediatRServiceProvider = mediatRServices.BuildServiceProvider();
-
-        _mediator = _mediatRServiceProvider.GetRequiredService<IMediator>();
 
         // Setup EasyRequestHandler with direct injection (no mediator)
         var easyDirectServices = new ServiceCollection();
@@ -92,105 +86,135 @@ public class RequestHandlerBenchmarks
         };
     }
 
-    // Simple request benchmarks (existing)
+    // --- Single simple request ---
+
     [Benchmark(Baseline = true)]
-    [BenchmarkCategory("SimpleRequest")]
-    public async Task<SimpleResponse> MediatR_SimpleRequest()
+    [BenchmarkCategory("Simple")]
+    public async Task<SimpleResponse> Simple_MediatR_Mediator()
     {
-        return await _mediator.Send(new MediatRSimpleRequest { Value = 42 });
+        using var scope = _mediatRServiceProvider.CreateScope();
+        var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
+        return await mediator.Send(new MediatRSimpleRequest { Value = 42 });
     }
 
     [Benchmark]
-    [BenchmarkCategory("SimpleRequest")]
-    public async Task<SimpleResponse> EasyRequestHandler_SimpleRequest()
+    [BenchmarkCategory("Simple")]
+    public async Task<SimpleResponse> Simple_Easy_Mediator()
     {
-        return await _easyRequestSender.SendAsync<EasySimpleRequest, SimpleResponse>(new EasySimpleRequest { Value = 42 });
+        using var scope = _easyRequestServiceProvider.CreateScope();
+        var sender = scope.ServiceProvider.GetRequiredService<ISender>();
+        return await sender.SendAsync<EasySimpleRequest, SimpleResponse>(new EasySimpleRequest { Value = 42 });
     }
 
-    // Direct handler injection
     [Benchmark]
-    [BenchmarkCategory("SimpleRequest")]
-    public async Task<SimpleResponse> EasyRequestHandler_DirectInjection()
+    [BenchmarkCategory("Simple")]
+    public async Task<SimpleResponse> Simple_Easy_Direct()
     {
-        var handler = _easyDirectServiceProvider.GetRequiredService<EasySimpleRequestHandler>();
+        using var scope = _easyDirectServiceProvider.CreateScope();
+        var handler = scope.ServiceProvider.GetRequiredService<EasySimpleRequestHandler>();
         return await handler.HandleAsync(new EasySimpleRequest { Value = 42 });
     }
 
-    // Complex request benchmarks (new)
+    // --- Single complex request (with logger injection + string processing) ---
+
     [Benchmark]
-    [BenchmarkCategory("ComplexRequest")]
-    public async Task<ComplexResponse> MediatR_ComplexRequest()
+    [BenchmarkCategory("Complex")]
+    public async Task<ComplexResponse> Complex_MediatR_Mediator()
     {
-        return await _mediator.Send(_mediatRComplexRequest);
+        using var scope = _mediatRServiceProvider.CreateScope();
+        var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
+        return await mediator.Send(_mediatRComplexRequest);
     }
 
     [Benchmark]
-    [BenchmarkCategory("ComplexRequest")]
-    public async Task<ComplexResponse> EasyRequestHandler_ComplexRequest()
+    [BenchmarkCategory("Complex")]
+    public async Task<ComplexResponse> Complex_Easy_Mediator()
     {
-        return await _easyRequestSender.SendAsync<EasyComplexRequest, ComplexResponse>(_easyComplexRequest);
+        using var scope = _easyRequestServiceProvider.CreateScope();
+        var sender = scope.ServiceProvider.GetRequiredService<ISender>();
+        return await sender.SendAsync<EasyComplexRequest, ComplexResponse>(_easyComplexRequest);
     }
 
-    // Complex direct handler injection
     [Benchmark]
-    [BenchmarkCategory("ComplexRequest")]
-    public async Task<ComplexResponse> EasyRequestHandler_ComplexDirectInjection()
+    [BenchmarkCategory("Complex")]
+    public async Task<ComplexResponse> Complex_Easy_Direct()
     {
-        var handler = _easyDirectServiceProvider.GetRequiredService<EasyComplexRequestHandler>();
+        using var scope = _easyDirectServiceProvider.CreateScope();
+        var handler = scope.ServiceProvider.GetRequiredService<EasyComplexRequestHandler>();
         return await handler.HandleAsync(_easyComplexRequest);
     }
 
-    // Load test benchmarks (existing)
+    // --- 100 concurrent simple requests ---
+
     [Benchmark]
-    [BenchmarkCategory("LoadTest")]
-    public async Task MediatR_LoadTest()
+    [BenchmarkCategory("Concurrent_Simple")]
+    public async Task Concurrent100_Simple_MediatR_Mediator()
     {
         var tasks = new List<Task<SimpleResponse>>();
 
         for (int i = 0; i < 100; i++)
         {
-            tasks.Add(_mediator.Send(new MediatRSimpleRequest { Value = i }));
+            var scope = _mediatRServiceProvider.CreateScope();
+            var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
+            tasks.Add(mediator.Send(new MediatRSimpleRequest { Value = i }).ContinueWith(t =>
+            {
+                scope.Dispose();
+                return t.Result;
+            }, TaskContinuationOptions.ExecuteSynchronously));
         }
         await Task.WhenAll(tasks);
     }
 
     [Benchmark]
-    [BenchmarkCategory("LoadTest")]
-    public async Task EasyRequestHandler_LoadTest()
+    [BenchmarkCategory("Concurrent_Simple")]
+    public async Task Concurrent100_Simple_Easy_Mediator()
     {
         var tasks = new List<Task<SimpleResponse>>();
 
         for (int i = 0; i < 100; i++)
         {
-            tasks.Add(_easyRequestSender.SendAsync<EasySimpleRequest, SimpleResponse>(new EasySimpleRequest { Value = i }));
+            var scope = _easyRequestServiceProvider.CreateScope();
+            var sender = scope.ServiceProvider.GetRequiredService<ISender>();
+            tasks.Add(sender.SendAsync<EasySimpleRequest, SimpleResponse>(new EasySimpleRequest { Value = i }).ContinueWith(t =>
+            {
+                scope.Dispose();
+                return t.Result;
+            }, TaskContinuationOptions.ExecuteSynchronously));
         }
         await Task.WhenAll(tasks);
     }
 
-    // Direct handler injection load test
     [Benchmark]
-    [BenchmarkCategory("LoadTest")]
-    public async Task EasyRequestHandler_DirectLoadTest()
+    [BenchmarkCategory("Concurrent_Simple")]
+    public async Task Concurrent100_Simple_Easy_Direct()
     {
         var tasks = new List<Task<SimpleResponse>>();
 
         for (int i = 0; i < 100; i++)
         {
-            var handler = _easyDirectServiceProvider.GetRequiredService<EasySimpleRequestHandler>();
-            tasks.Add(handler.HandleAsync(new EasySimpleRequest { Value = i }));
+            var scope = _easyDirectServiceProvider.CreateScope();
+            var handler = scope.ServiceProvider.GetRequiredService<EasySimpleRequestHandler>();
+            tasks.Add(handler.HandleAsync(new EasySimpleRequest { Value = i }).ContinueWith(t =>
+            {
+                scope.Dispose();
+                return t.Result;
+            }, TaskContinuationOptions.ExecuteSynchronously));
         }
         await Task.WhenAll(tasks);
     }
 
-    // Complex load test benchmarks (new)
+    // --- 50 concurrent complex requests ---
+
     [Benchmark]
-    [BenchmarkCategory("ComplexLoadTest")]
-    public async Task MediatR_ComplexLoadTest()
+    [BenchmarkCategory("Concurrent_Complex")]
+    public async Task Concurrent50_Complex_MediatR_Mediator()
     {
         var tasks = new List<Task<ComplexResponse>>();
 
         for (int i = 0; i < 50; i++)
         {
+            var scope = _mediatRServiceProvider.CreateScope();
+            var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
             var request = new MediatRComplexRequest
             {
                 Data = $"Data {i}",
@@ -200,19 +224,25 @@ public class RequestHandlerBenchmarks
                     { $"key{i}_2", $"value{i}_2" }
                 }
             };
-            tasks.Add(_mediator.Send(request));
+            tasks.Add(mediator.Send(request).ContinueWith(t =>
+            {
+                scope.Dispose();
+                return t.Result;
+            }, TaskContinuationOptions.ExecuteSynchronously));
         }
         await Task.WhenAll(tasks);
     }
 
     [Benchmark]
-    [BenchmarkCategory("ComplexLoadTest")]
-    public async Task EasyRequestHandler_ComplexLoadTest()
+    [BenchmarkCategory("Concurrent_Complex")]
+    public async Task Concurrent50_Complex_Easy_Mediator()
     {
         var tasks = new List<Task<ComplexResponse>>();
 
         for (int i = 0; i < 50; i++)
         {
+            var scope = _easyRequestServiceProvider.CreateScope();
+            var sender = scope.ServiceProvider.GetRequiredService<ISender>();
             var request = new EasyComplexRequest
             {
                 Data = $"Data {i}",
@@ -222,21 +252,25 @@ public class RequestHandlerBenchmarks
                     { $"key{i}_2", $"value{i}_2" }
                 }
             };
-            tasks.Add(_easyRequestSender.SendAsync<EasyComplexRequest, ComplexResponse>(request));
+            tasks.Add(sender.SendAsync<EasyComplexRequest, ComplexResponse>(request).ContinueWith(t =>
+            {
+                scope.Dispose();
+                return t.Result;
+            }, TaskContinuationOptions.ExecuteSynchronously));
         }
         await Task.WhenAll(tasks);
     }
 
-    // Complex direct handler injection load test
     [Benchmark]
-    [BenchmarkCategory("ComplexLoadTest")]
-    public async Task EasyRequestHandler_ComplexDirectLoadTest()
+    [BenchmarkCategory("Concurrent_Complex")]
+    public async Task Concurrent50_Complex_Easy_Direct()
     {
         var tasks = new List<Task<ComplexResponse>>();
 
         for (int i = 0; i < 50; i++)
         {
-            var handler = _easyDirectServiceProvider.GetRequiredService<EasyComplexRequestHandler>();
+            var scope = _easyDirectServiceProvider.CreateScope();
+            var handler = scope.ServiceProvider.GetRequiredService<EasyComplexRequestHandler>();
             var request = new EasyComplexRequest
             {
                 Data = $"Data {i}",
@@ -246,7 +280,11 @@ public class RequestHandlerBenchmarks
                     { $"key{i}_2", $"value{i}_2" }
                 }
             };
-            tasks.Add(handler.HandleAsync(request));
+            tasks.Add(handler.HandleAsync(request).ContinueWith(t =>
+            {
+                scope.Dispose();
+                return t.Result;
+            }, TaskContinuationOptions.ExecuteSynchronously));
         }
         await Task.WhenAll(tasks);
     }

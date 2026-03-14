@@ -21,5 +21,10 @@
         /// When enabled, handler classes can be injected directly.
         /// </summary>
         internal bool EnableHandlerInjection { get; set; } = true;
+
+        /// <summary>
+        /// Gets or sets whether any pipeline behaviors have been registered.
+        /// </summary>
+        internal bool HasBehaviors { get; set; }
     }
 }

@@ -3,8 +3,7 @@ using BenchmarkDotNet.Reports;
 using BenchmarkDotNet.Running;
 using Benchmarks.Benchmarks;
 
-var config = DefaultConfig.Instance.AddLogicalGroupRules(BenchmarkLogicalGroupRule.ByCategory)
-    .WithOptions(ConfigOptions.DisableOptimizationsValidator);
+var config = DefaultConfig.Instance.AddLogicalGroupRules(BenchmarkLogicalGroupRule.ByCategory);
 
 BenchmarkRunner.Run<RequestHandlerBenchmarks>(config);
 
