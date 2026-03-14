@@ -192,20 +192,28 @@ namespace EasyRequestHandlers.Events
                 {
                     await Task.WhenAll(tasks).ConfigureAwait(false);
                 }
-                catch
+                catch (Exception ex)
                 {
+                    // Preserve cancellation semantics: do not treat cancellations as handler failures.
+                    if (ex is OperationCanceledException ||
+                        cancellationToken.IsCancellationRequested ||
+                        tasks.Any(t => t.IsCanceled))
+                    {
+                        throw;
+                    }
+
                     for (int i = 0; i < taskHandlerPairs.Length; i++)
                     {
                         if (taskHandlerPairs[i].Task.IsFaulted)
                         {
-                            foreach (var ex in taskHandlerPairs[i].Task.Exception!.InnerExceptions)
+                            foreach (var handlerEx in taskHandlerPairs[i].Task.Exception!.InnerExceptions)
                             {
-                                _logger.LogError(ex, "Error in parallel event handler {HandlerType} for event {EventType}",
+                                _logger.LogError(handlerEx, "Error in parallel event handler {HandlerType} for event {EventType}",
                                     taskHandlerPairs[i].Handler.GetType().Name, typeof(TEvent).Name);
 
                                 (errors ??= new List<Exception>()).Add(
                                     new InvalidOperationException(
-                                        $"Event handler '{taskHandlerPairs[i].Handler.GetType().Name}' failed for event '{typeof(TEvent).Name}'.", ex));
+                                        $"Event handler '{taskHandlerPairs[i].Handler.GetType().Name}' failed for event '{typeof(TEvent).Name}'.", handlerEx));
                             }
                         }
                     }
@@ -222,6 +230,12 @@ namespace EasyRequestHandlers.Events
                     }
                     catch (Exception ex)
                     {
+                        // Preserve cancellation semantics in sequential execution as well.
+                        if (ex is OperationCanceledException || cancellationToken.IsCancellationRequested)
+                        {
+                            throw;
+                        }
+
                         _logger.LogError(ex, "Error executing event handler {HandlerType} for event {EventType}",
                             handlers[i].GetType().Name, typeof(TEvent).Name);
 
