@@ -8,13 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.2.0] - 2026-03-14
 
 ### Added
-- **Fire-and-forget event publishing**: `PublishAsync` now accepts a `fireAndForget` parameter (default `true`). When enabled, handlers are dispatched in the background and the method returns immediately. Errors in fire-and-forget mode are logged but do not propagate to the caller.
+- **Fire-and-forget event publishing**: `IEventPublisher` now exposes `PublishAsync<TEvent>(TEvent @event, EventPublishOptions? options = null)`. `EventPublishOptions.FireAndForget` defaults to `false`; when set to `true`, handlers are dispatched in the background and the method returns immediately. Errors in fire-and-forget mode are logged but do not propagate to the caller.
+- **Default overload**: Added `PublishAsync<TEvent>(TEvent @event)` as a convenience overload that is equivalent to calling `PublishAsync(@event, new EventPublishOptions())` (i.e., fire-and-forget is disabled by default).
 - **Handler ordering**: New `[HandlerOrder(int)]` attribute to control event handler execution priority. Lower values run first. Handlers without the attribute preserve their registration order.
 - **`HandlerOrderAttribute`**: New attribute in `EasyRequestHandlers.Common` for event handler ordering.
-- 18 new tests covering fire-and-forget, handler ordering, error resilience, registration validation, behavior execution order, hook auto-discovery, and handler lifetime.
+- 18 new tests covering fire-and-forget via `EventPublishOptions`, handler ordering, error resilience, registration validation, behavior execution order, hook auto-discovery, and handler lifetime.
 
 ### Changed
-- **Event error resilience**: A failing event handler no longer stops other handlers from executing. In both sequential and parallel modes, all handlers run to completion. Errors are logged individually and collected into an `AggregateException` thrown after all handlers finish (when `fireAndForget` is `false`).
+- **Event error resilience**: A failing event handler no longer stops other handlers from executing. In both sequential and parallel modes, all handlers run to completion. When `EventPublishOptions.FireAndForget` is `false`, errors are logged individually and collected into an `AggregateException` thrown after all handlers finish.
 - **Registration validation**: Calling `.WithBehaviors()` or `.WithBehavior()` without `.WithMediatorPattern()` now throws `InvalidOperationException` instead of silently doing nothing.
 - **`RequestHandlerBuilder` constructor** changed from `public` to `internal` to prevent direct instantiation outside the fluent API.
 - **`WithBehavior(Type)`** now delegates to `WithBehaviors(params Type[])`, removing duplicated validation logic.
