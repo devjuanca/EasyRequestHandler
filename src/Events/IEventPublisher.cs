@@ -228,6 +228,11 @@ namespace EasyRequestHandlers.Events
                     {
                         await handlers[i].HandleAsync(@event, cancellationToken).ConfigureAwait(false);
                     }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        // Propagate cancellation triggered by the provided token unchanged.
+                        throw;
+                    }
                     catch (Exception ex)
                     {
                         // Preserve cancellation semantics in sequential execution as well.
